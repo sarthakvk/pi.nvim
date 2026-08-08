@@ -22,10 +22,15 @@ proposals.
 
 ### Context without restating it
 
-From a file in Neovim, you can deliberately send the current selection or file
-context to the Pi conversation, together with a short note, question, or
-constraint. Pi receives the relevant text, location, and any unsaved editor
-content as part of the conversation you are already having.
+From a saved file in Neovim, you can deliberately send the current selection
+or file context to the Pi conversation, together with a short note, question,
+or constraint. Pi receives the relevant text from disk and its source location
+as part of the conversation you are already having.
+
+The bridge never sends unsaved source content. If a source buffer is modified
+or its file changed externally without being reloaded, the request is refused
+until you save, discard, or reload the changes. The bridge does not save files
+implicitly.
 
 The interaction starts from the editor. With an interactive session, the
 prompt, streamed work, questions, and answers stay in Pi's terminal. With a
@@ -150,6 +155,8 @@ terminal for a fully interactive conversation.
 - Version 1 reports known edit and write tool activity but does not provide a
   complete audit boundary: shell commands and external tools may change files
   without identifying every affected path.
+- Context sent to Pi always comes from saved files. A modified or externally
+  stale buffer blocks the request rather than contributing unsaved text.
 - A persisted session must not be opened concurrently by a headless process
   and a terminal Pi process. Neovim stops its worker before handing the session
   off for terminal use.
@@ -165,7 +172,8 @@ Version 1 is successful when it removes the mechanical context-transfer step
 without moving understanding or control away from you: Neovim remains the
 primary code-reading environment, interactive Pi remains a visible terminal
 collaborator when used, headless Pi remains observable and resumable when a
-terminal is unnecessary, and annotations never require source-file comments.
+terminal is unnecessary, unsaved source never leaves the editor, and
+annotations never require source-file comments.
 
 Version 2 is successful when it adds a reviewable path for agent edits without
 confusing them with your own work or requiring a permanently visible AI UI.
