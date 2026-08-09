@@ -182,14 +182,13 @@ remove, reorder, refresh, or clear items before sending the bundle. An item can
 be added only while its buffer is unmodified and synchronized with its file.
 
 Each added range is anchored with Neovim extmarks so it follows later edits.
-The draft retains the original path, range, saved-text snapshot, and file hash
-for validation and review. At send time, Neovim verifies that every source
-buffer is unmodified and synchronized with disk, resolves every extmark, and
-reads the exact selected text from the saved file. If the saved text changed
-since it was added, the item is labelled `changed_since_added`; if its source
-has unsaved or externally changed content, or its range can no longer be
-resolved, sending is refused until the file is saved or reloaded and the item
-is refreshed or removed. An old snapshot is never silently transmitted.
+The draft retains the original path, range, and saved-text snapshot. At send
+time, Neovim verifies that every source buffer is unmodified and synchronized
+with disk, resolves every extmark, and reads the exact selected text from the
+saved file. If its source has unsaved or externally changed content, or its
+range can no longer be resolved, sending is refused until the file is saved or
+reloaded and the item is refreshed or removed. An old snapshot is never
+silently transmitted.
 
 A request carries:
 
@@ -204,15 +203,12 @@ Each context item carries:
 - a generated item ID and item kind: range or whole file;
 - project-relative path and one-based inclusive line range;
 - exact text read from the saved file at send time;
-- current saved-file SHA-256 hash;
-- original saved-file hash and whether it changed after being added;
 - the optional item-specific note.
 
-The final Pi user message uses a documented text envelope with request metadata,
-the overall note, and one clearly delimited section per context item in draft
-order. Both transports generate the same envelope. Saved source text and item
-notes are editor context; neither is silently written into a source file or
-converted to a source-code comment.
+The final Pi user message is JSON containing request metadata, the overall note,
+and an ordered `contexts` list. Saved source text and item notes are editor
+context; neither is silently written into a source file or converted to a
+source-code comment.
 
 The configured size limit applies to the aggregate encoded context bundle.
 Oversized bundles are refused rather than truncated, and the draft is retained
