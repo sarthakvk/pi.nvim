@@ -86,9 +86,8 @@ resolve_live_range = function(item)
   local start_position = vim.api.nvim_buf_get_extmark_by_id(item.bufnr, M.namespace, item.start_mark, {})
   local end_position = vim.api.nvim_buf_get_extmark_by_id(item.bufnr, M.namespace, item.end_mark, {})
   if #start_position == 0 or #end_position == 0 then return nil, "source range can no longer be resolved" end
-  -- Extmark rows are zero-based while draft items are one-based. An edit that
-  -- deletes across both marks can also leave them inverted, which is no longer a
-  -- range the user ever selected.
+  -- Extmark rows are zero-based while draft items are one-based. The ordering
+  -- check below is a defensive guard, not a state the marks are known to reach.
   local start_line, end_line = start_position[1] + 1, end_position[1] + 1
   if start_line > end_line then return nil, "source range can no longer be resolved" end
   return start_line, end_line
@@ -130,10 +129,10 @@ local function unique_marker(label, content)
   return marker
 end
 
--- Marker choice is fed every untrusted byte in the request, and each inner
--- marker additionally sees the outer ones, so sections cannot be forged or
--- closed by the wrong marker. The byte counts are the second line of defence:
--- they let the reader bound a section whose text merely looks like a marker.
+-- Marker choice is fed the overall note plus every item note and excerpt, and
+-- each inner marker additionally sees the outer ones, so sections cannot be
+-- forged or closed by the wrong marker. The byte counts let the reader bound a
+-- section whose text merely looks like a marker.
 function M.envelope(request)
   local all_untrusted_text = request.note
   for _, item in ipairs(request.contexts) do all_untrusted_text = all_untrusted_text .. item.note .. item.text end
