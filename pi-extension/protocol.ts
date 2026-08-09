@@ -1,8 +1,19 @@
+// Shared vocabulary between the Pi side of the bridge and Neovim: the wire
+// version, the Finding record, and the path and validation rules both ends must
+// agree on. Kept apart from index.ts because these are pure functions with no
+// Pi runtime dependency, which is what makes them testable and safe to reuse.
+//
+// The project-boundary rules here mirror lua/pi/project.lua deliberately: if the
+// two disagreed about what a root or a relative path is, findings would resolve
+// to different files on each side.
+
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+// Bumped only on an incompatible change; both ends refuse a mismatch at the
+// handshake rather than half-speaking an older dialect.
 export const VERSION = 1;
 
 export type Finding = {
@@ -22,6 +33,10 @@ export function identifier(): string {
   return randomUUID();
 }
 
+// Returns `candidate` as a root-relative POSIX path, or undefined if it escapes
+// the project. Both ends are resolved through realpath first so a symlink cannot
+// be used to reach outside the root, and a candidate that does not exist yet is
+// resolved via its parent directory so new files are still judged fairly.
 export function inside(root: string, candidate: string): string | undefined {
   try {
     const realRoot = realpathSync.native(root);
@@ -30,6 +45,7 @@ export function inside(root: string, candidate: string): string | undefined {
     try { realCandidate = realpathSync.native(absolute); }
     catch { realCandidate = join(realpathSync.native(dirname(absolute)), basename(absolute)); }
     const relativePath = relative(realRoot, realCandidate);
+    // "" is the root directory itself, which is never a file we may annotate.
     if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`)) return undefined;
     return relativePath.split(sep).join("/");
   } catch {
@@ -37,6 +53,8 @@ export function inside(root: string, candidate: string): string | undefined {
   }
 }
 
+// Must agree with pi.project.root on the Lua side: the Git worktree top level,
+// or the working directory when there is no worktree.
 export function canonicalRoot(cwd: string): string {
   try {
     return realpathSync.native(execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim());
@@ -45,6 +63,10 @@ export function canonicalRoot(cwd: string): string {
   }
 }
 
+// Findings come from a model, so nothing about them is trusted. Beyond shape and
+// range checks, the claimed expected_text is compared against the file on disk:
+// an annotation whose anchor text does not exist would land on unrelated lines,
+// so it is rejected at the source instead of being shown as stale in the editor.
 export function validateFinding(root: string, value: unknown): Finding {
   if (!value || typeof value !== "object") throw new Error("finding must be an object");
   const input = value as Record<string, unknown>;
@@ -55,6 +77,8 @@ export function validateFinding(root: string, value: unknown): Finding {
   if (!["error", "warning", "information", "hint"].includes(String(severity))) throw new Error("invalid finding severity");
   for (const key of ["request_id", "title", "message", "expected_text"] as const) if (typeof input[key] !== "string" || input[key] === "") throw new Error(`finding ${key} must be a non-empty string`);
   const sourceLines = readFileSync(join(root, path), "utf8").split("\n");
+  // A trailing newline splits into a phantom empty last line; dropping it keeps
+  // indices in step with the line numbers the editor reports.
   if (sourceLines.at(-1) === "") sourceLines.pop();
   if ((input.end_line as number) > sourceLines.length) throw new Error("finding range exceeds file length");
   if (sourceLines.slice((input.start_line as number) - 1, input.end_line as number).join("\n") !== input.expected_text) throw new Error("finding expected_text does not match its range");
@@ -66,10 +90,15 @@ export function validateFinding(root: string, value: unknown): Finding {
   };
 }
 
+// File-name stem for a session's socket and descriptor. Hashed because roots and
+// session ids are not safe as path components, and keyed on both so two sessions
+// in the same project do not collide.
 export function descriptorName(root: string, sessionId: string): string {
   return createHash("sha256").update(`${root}\0${sessionId}`).digest("hex").slice(0, 24);
 }
 
+// Parses one framed line, yielding undefined for anything that is not a JSON
+// object, so callers can skip junk without a try/catch at every call site.
 export function parseJson(line: string): Record<string, unknown> | undefined {
   try {
     const value = JSON.parse(line);

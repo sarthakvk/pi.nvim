@@ -1,3 +1,8 @@
+-- `:checkhealth pi` report. Every check here covers a local prerequisite the
+-- bridge cannot recover from on its own: the Neovim version the plugin's APIs
+-- need, the Pi executable and companion extension it spawns, and the runtime
+-- directory where opted-in terminal sessions advertise themselves.
+
 local M = {}
 
 function M.check()
@@ -9,6 +14,8 @@ function M.check()
   if vim.fn.filereadable(extension) == 1 then vim.health.ok("Companion extension: " .. extension) else vim.health.error("Companion extension missing: " .. extension) end
   local runtime = vim.env.XDG_RUNTIME_DIR or vim.fn.stdpath("state") .. "/run"
   local stat = vim.uv.fs_stat(runtime)
+  -- A missing runtime directory is only a warning: it is created when a Pi
+  -- session first opts in, so its absence just means none has yet.
   if stat and stat.type == "directory" then vim.health.ok("Runtime directory: " .. runtime) else vim.health.warn("Runtime directory will be created on demand: " .. runtime) end
 end
 

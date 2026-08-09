@@ -1,15 +1,29 @@
+-- End-to-end check of the headless path, driven by tests/e2e/run-headless.sh
+-- which supplies a throwaway Git project containing sample.js.
+--
+-- This is not a unit test: it starts a real `pi --mode rpc` worker and sends a
+-- real prompt, so it needs an authenticated Pi and reaches the configured model
+-- provider. It covers the parts that only a live worker can show — that Pi's
+-- edits are reported back as known changes, that findings published through the
+-- companion extension arrive, and that stopping and restarting resumes the same
+-- persisted session rather than starting a fresh conversation.
+
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
 local pi = require("pi")
 pi.setup({ fallback = "headless" })
 
 local root = assert(arg[1], "temporary project root required")
-local sample = root .. "/sample.js"
+local sample_path = root .. "/sample.js"
 local session = require("pi.session")
 local settled, failure, finding_count = 0, nil, 0
-local current = session.get(root)
-current.on_settled = function() settled = settled + 1 end
-current.on_findings = function(items) finding_count = finding_count + #items end
+-- Handlers are installed straight onto the session state, the same slots
+-- pi.init normally fills, so the test observes the worker without any UI.
+local current_session = session.get(root)
+current_session.on_settled = function() settled = settled + 1 end
+current_session.on_findings = function(items) finding_count = finding_count + #items end
 
+-- A live model turn has no useful upper bound, so poll generously but abort as
+-- soon as any callback records a failure.
 local function wait_for(predicate, message)
   assert(vim.wait(120000, function() return predicate() or failure end, 50), failure or message)
   assert(not failure, failure)
@@ -23,7 +37,7 @@ session.start_headless(root, pi.config, function(target, err)
 end)
 
 wait_for(function() return settled >= 1 end, "Pi did not settle after the edit")
-assert(table.concat(vim.fn.readfile(sample), "\n") == "const answer = 43;", "Pi did not edit the fixture")
+assert(table.concat(vim.fn.readfile(sample_path), "\n") == "const answer = 43;", "Pi did not edit the fixture")
 assert(session.get(root).transport.changed_paths["sample.js"], "Pi did not report the known edit")
 assert(finding_count > 0, "Pi did not publish a finding")
 local first_session = session.get(root).session_file
@@ -31,6 +45,8 @@ assert(first_session and vim.fn.filereadable(first_session) == 1, "headless sess
 assert(session.stop(root))
 wait_for(function() return session.get(root).mode == nil end, "Pi worker did not stop")
 
+-- Second start with no session argument: it must pick up the persisted session
+-- file on its own, which is what makes stopping the worker non-destructive.
 session.start_headless(root, pi.config, function(target, err)
   if not target then failure = err; return end
   target.transport:send("Reply with exactly: pi-nvim-resume-ok", nil, function(_, send_err)

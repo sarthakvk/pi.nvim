@@ -1,3 +1,13 @@
+-- Which Pi is this project talking to, and how. pi.nvim can reach Pi two ways:
+-- by attaching over a unix socket to an interactive terminal session that opted
+-- in with /nvim-bridge enable, or by spawning its own headless `pi --mode rpc`
+-- worker. This module owns the choice between them and the per-root state
+-- (transport, mode, activity, session ids) that the rest of the plugin reads.
+--
+-- Discovery is deliberately opt-in: a Pi process is only reachable if it wrote a
+-- descriptor into the user-private runtime directory. Sharing a working
+-- directory with Pi is never enough to be attached to.
+
 local project = require("pi.project")
 local socket = require("pi.transport.socket")
 local rpc = require("pi.transport.rpc")
@@ -9,6 +19,8 @@ local function runtime_dir()
   local base = vim.env.XDG_RUNTIME_DIR
   if not base or base == "" then base = vim.fn.stdpath("state") .. "/run" end
   local directory = base .. "/pi.nvim"
+  -- 0700: descriptors name a socket that can drive someone's agent session, so
+  -- they must not be readable by other users on the machine.
   vim.fn.mkdir(directory, "p", "0700")
   return directory
 end
@@ -20,30 +32,34 @@ local function read_json(path)
 end
 
 function M.discover(root)
-  local found = {}
+  local descriptors = {}
   for _, path in ipairs(vim.fn.globpath(runtime_dir(), "*.json", false, true)) do
     local descriptor = read_json(path)
     if descriptor and descriptor.version == 1 and descriptor.root == root and type(descriptor.socket_path) == "string" then
       local alive = descriptor.pid and vim.uv.kill(descriptor.pid, 0)
-      if alive and vim.uv.fs_stat(descriptor.socket_path) then table.insert(found, descriptor) else pcall(vim.fn.delete, path) end
+      -- Nothing removes descriptors when Pi is killed, so a descriptor whose
+      -- process or socket is gone is garbage collected here.
+      if alive and vim.uv.fs_stat(descriptor.socket_path) then table.insert(descriptors, descriptor) else pcall(vim.fn.delete, path) end
     end
   end
-  return found
+  return descriptors
 end
 
-local function state(root)
+local function state_for(root)
   M.state[root] = M.state[root] or { root = root, mode = nil, activity = "idle" }
   return M.state[root]
 end
 
-function M.get(root) return state(root) end
+function M.get(root) return state_for(root) end
 
 function M.attach(root, descriptor, callback)
   socket.connect(descriptor, root, {
     on_event = function(event)
-      local current = state(root)
+      local current = state_for(root)
       if event.type == "activity" then
         current.activity = event.state
+        -- Edited paths are reported as they happen but only acted on once Pi
+        -- goes idle, so a buffer is not reloaded in the middle of a tool run.
         if event.state == "idle" and current.known_changes then
           local paths = vim.tbl_keys(current.known_changes)
           current.known_changes = {}
@@ -58,7 +74,9 @@ function M.attach(root, descriptor, callback)
     end,
   }, function(transport, err)
     if not transport then return callback(nil, err) end
-    local current = state(root)
+    local current = state_for(root)
+    -- One transport per root: drop whatever was attached before rather than
+    -- leaving a second connection delivering events for the same project.
     if current.transport then current.transport:close() end
     current.transport, current.mode, current.descriptor = transport, "interactive", descriptor
     current.session_id, current.session_file = transport.state.session_id, transport.state.session_file
@@ -67,6 +85,8 @@ function M.attach(root, descriptor, callback)
   end)
 end
 
+-- Reattaches to the specific session that produced a finding, so a reply lands
+-- in the conversation that has the surrounding reasoning.
 function M.attach_origin(root, session_id, callback)
   for _, descriptor in ipairs(M.discover(root)) do
     if descriptor.session_id == session_id then return M.attach(root, descriptor, callback) end
@@ -91,73 +111,81 @@ local function saved_session(root)
   return read_json(file)
 end
 
-local function save_session(root, value)
-  vim.fn.writefile({ vim.json.encode(value) }, project.state_file(root), "b")
+local function save_session(root, record)
+  vim.fn.writefile({ vim.json.encode(record) }, project.state_file(root), "b")
 end
 
 function M.start_headless(root, config, callback)
-  local current = state(root)
+  local current = state_for(root)
   if current.mode == "headless" and current.transport and not current.transport.closed then
     if current.stopping then return callback(nil, "the existing Pi worker is still stopping") end
     return callback(current)
   end
   rpc.start(config, root, config.resume_headless and saved_session(root) or nil, {
     on_event = function(event, worker)
-      local session = state(root)
-      if event.type == "agent_start" then session.activity = "working"
-      elseif event.type == "agent_settled" then session.activity = "idle"; if session.on_settled then session.on_settled(worker) end
-      elseif event.type == "tool_execution_start" then session.activity = "working" end
+      local current = state_for(root)
+      if event.type == "agent_start" then current.activity = "working"
+      elseif event.type == "agent_settled" then current.activity = "idle"; if current.on_settled then current.on_settled(worker) end
+      elseif event.type == "tool_execution_start" then current.activity = "working" end
     end,
+    -- The handlers below only forward to whatever pi.init wired onto the state
+    -- table; they are re-read per call because attaching happens later.
     on_findings = function(items, origin)
-      local active = state(root)
-      if active.on_findings then active.on_findings(items, origin) end
+      local current = state_for(root)
+      if current.on_findings then current.on_findings(items, origin) end
     end,
     on_findings_snapshot = function(items, origin)
-      local active = state(root)
-      if active.on_findings_snapshot then active.on_findings_snapshot(items, origin) end
+      local current = state_for(root)
+      if current.on_findings_snapshot then current.on_findings_snapshot(items, origin) end
     end,
     on_status = function(key, text)
-      local active = state(root)
-      if active.on_status then active.on_status(key, text) end
+      local current = state_for(root)
+      if current.on_status then current.on_status(key, text) end
     end,
     on_widget = function(key, lines, placement)
-      local active = state(root)
-      if active.on_widget then active.on_widget(key, lines, placement) end
+      local current = state_for(root)
+      if current.on_widget then current.on_widget(key, lines, placement) end
     end,
     on_title = function(title)
-      local active = state(root)
-      if active.on_title then active.on_title(title) end
+      local current = state_for(root)
+      if current.on_title then current.on_title(title) end
     end,
     on_editor_text = function(text)
-      local active = state(root)
-      if active.on_editor_text then active.on_editor_text(text) end
+      local current = state_for(root)
+      if current.on_editor_text then current.on_editor_text(text) end
     end,
     on_exit = function(code, _, stderr, worker)
-      local session = state(root)
-      if session.transport == worker then
-        session.transport, session.mode, session.stopping, session.activity = nil, nil, nil, "stopped"
+      local current = state_for(root)
+      -- A worker that already lost its slot to a newer one must not tear down
+      -- the state that replaced it.
+      if current.transport == worker then
+        current.transport, current.mode, current.stopping, current.activity = nil, nil, nil, "stopped"
       end
-      if session.on_exit then session.on_exit(code, stderr) end
+      if current.on_exit then current.on_exit(code, stderr) end
     end,
   }, function(worker, err)
     if not worker then return callback(nil, err) end
-    local session = state(root)
+    local current = state_for(root)
     if current.transport then current.transport:close() end
-    session.transport, session.mode = worker, "headless"
-    session.session_id, session.session_file = worker.state.sessionId, worker.state.sessionFile
-    save_session(root, { session_id = session.session_id, session_file = session.session_file })
-    callback(session)
+    current.transport, current.mode = worker, "headless"
+    current.session_id, current.session_file = worker.state.sessionId, worker.state.sessionFile
+    -- Persisted so the next headless start can resume this conversation instead
+    -- of opening a fresh one.
+    save_session(root, { session_id = current.session_id, session_file = current.session_file })
+    callback(current)
   end)
 end
 
+-- Returns the stopped worker's session reference so the caller can tell the user
+-- how to resume it; the worker exits asynchronously via on_exit.
 function M.stop(root)
-  local current = state(root)
+  local current = state_for(root)
   if current.mode ~= "headless" or not current.transport then return nil, "no headless Pi worker is running" end
   if current.stopping then return nil, "the headless Pi worker is already stopping" end
-  local result = { session_id = current.session_id, session_file = current.session_file }
+  local stopped = { session_id = current.session_id, session_file = current.session_file }
   current.stopping, current.activity = true, "stopping"
   current.transport:stop()
-  return result
+  return stopped
 end
 
 return M

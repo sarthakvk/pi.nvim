@@ -28,6 +28,9 @@ local function split_lines(text)
   return lines
 end
 
+-- Returns true plus the file's path, or false plus the reason the buffer cannot
+-- be captured. A buffer only qualifies while what is on disk is byte-identical
+-- to what the user is looking at.
 function M.buffer_is_saved(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return false, "buffer is no longer valid"
@@ -97,6 +100,9 @@ function M.file(bufnr)
   return captured, err
 end
 
+-- Re-reads a range straight from disk, for callers holding an excerpt that may
+-- have drifted. Returns the text plus a fresh whole-file hash, or nil plus a
+-- reason.
 function M.read_range(path, first_line, last_line)
   local disk_text, err = read_file(path)
   if not disk_text then

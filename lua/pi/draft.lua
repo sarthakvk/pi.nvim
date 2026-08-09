@@ -102,6 +102,7 @@ function M.bundle(root, overall_note, maximum_bytes)
     local first_line, last_line = resolve_live_range(item)
     if not first_line then return nil, last_line end
     local text, hash = context.read_range(item.path, first_line, last_line)
+    -- On failure read_range returns the reason in place of the hash.
     if not text then return nil, hash end
     table.insert(contexts, {
       id = item.id, kind = item.kind, path = item.relative_path,
