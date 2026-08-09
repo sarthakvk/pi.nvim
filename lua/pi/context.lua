@@ -1,8 +1,7 @@
 -- Source capture for pi.nvim: turns a buffer or line range into the excerpt
 -- record that pi.draft collects and pi.init sends to Pi. Excerpts always come
 -- from disk and a buffer only qualifies while it is saved and inside the project
--- root, so Pi sees what is really on the filesystem; the whole-file hash on each
--- record lets a later refresh notice the range went stale.
+-- root, so Pi sees what is really on the filesystem.
 
 local project = require("pi.project")
 
@@ -86,9 +85,6 @@ function M.range(bufnr, first_line, last_line)
 		start_line = first_line,
 		end_line = last_line,
 		text = table.concat(vim.list_slice(lines, first_line, last_line), "\n"),
-		-- Hash the whole file, not just the excerpt, so a later re-read can tell
-		-- that the range shifted because of edits made outside it.
-		hash = vim.fn.sha256(disk_text),
 		bufnr = bufnr,
 	}
 end
@@ -103,8 +99,7 @@ function M.file(bufnr)
 end
 
 -- Re-reads a range straight from disk, for callers holding an excerpt that may
--- have drifted. Returns the text plus a fresh whole-file hash, or nil plus a
--- reason.
+-- have drifted. Returns the text, or nil plus a reason.
 function M.read_range(path, first_line, last_line)
 	local disk_text, err = read_file(path)
 	if not disk_text then
@@ -114,7 +109,7 @@ function M.read_range(path, first_line, last_line)
 	if first_line < 1 or last_line < first_line or last_line > #lines then
 		return nil, "range no longer exists"
 	end
-	return table.concat(vim.list_slice(lines, first_line, last_line), "\n"), vim.fn.sha256(disk_text)
+	return table.concat(vim.list_slice(lines, first_line, last_line), "\n")
 end
 
 return M
