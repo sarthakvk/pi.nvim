@@ -1,5 +1,7 @@
 # pi.nvim
 
+> **WARNING**: This is currently in development phase, I built this as a prototype with pi, it works but it is sloppy, I am currently working on that.
+
 A local, editor-first bridge from Neovim to [Pi](https://pi.dev). It sends only
 saved source text to an opted-in Pi terminal session or a project-scoped
 headless Pi RPC worker. Pi remains the conversation UI; Neovim provides context
