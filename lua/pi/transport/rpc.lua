@@ -177,13 +177,10 @@ function M:receive(event)
 	elseif event.type == "tool_execution_end" and event.toolName == "nvim_publish_findings" then
 		local published = event.result and event.result.details and event.result.details.findings
 		if type(published) == "table" and self.handlers.on_findings then
-			self.handlers.on_findings(
-				published,
-				{
-					origin_session_id = self.state and self.state.sessionId,
-					origin_session_file = self.state and self.state.sessionFile,
-				}
-			)
+			self.handlers.on_findings(published, {
+				origin_session_id = self.state and self.state.sessionId,
+				origin_session_file = self.state and self.state.sessionFile,
+			})
 		end
 	elseif event.type == "extension_ui_request" then
 		-- Answered here and not forwarded: Pi is blocked waiting for the reply.

@@ -159,3 +159,144 @@ export function parseJson(line: string): Record<string, unknown> | undefined {
     return undefined;
   }
 }
+
+type Context = {
+  text: string;
+  note?: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  kind: string;
+};
+
+type ContextEnvelope = {
+  note: string;
+  contexts: Context[];
+};
+
+function parseContextEnvelope(text: string): ContextEnvelope | undefined {
+  try {
+    const value = JSON.parse(text);
+    if (!value || typeof value !== "object" || !Array.isArray(value.contexts)) {
+      return undefined;
+    }
+    if (typeof value.note !== "string") return undefined;
+    const contexts = value.contexts.map((context: unknown) => {
+      if (!context || typeof context !== "object") throw new Error("invalid context");
+      const item = context as Record<string, unknown>;
+      if (
+        typeof item.text !== "string" ||
+        typeof item.path !== "string" ||
+        typeof item.kind !== "string" ||
+        item.path === "" ||
+        item.kind === ""
+      ) {
+        throw new Error("invalid context metadata");
+      }
+      if (item.note !== undefined && typeof item.note !== "string") {
+        throw new Error("invalid context note");
+      }
+      if (
+        !Number.isInteger(item.start_line) ||
+        !Number.isInteger(item.end_line) ||
+        (item.start_line as number) < 1 ||
+        (item.end_line as number) < (item.start_line as number)
+      ) {
+        throw new Error("invalid context lines");
+      }
+      return {
+        text: item.text,
+        note: item.note as string | undefined,
+        path: item.path,
+        start_line: item.start_line as number,
+        end_line: item.end_line as number,
+        kind: item.kind,
+      };
+    });
+    return { note: value.note, contexts };
+  } catch {
+    return undefined;
+  }
+}
+
+function blockquote(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+}
+
+function fenceFor(text: string): string {
+  const runs = text.match(/`+/g) ?? [];
+  const longestRun = runs.reduce((longest, run) => Math.max(longest, run.length), 0);
+  // Triple backticks are the normal format. Use a longer fence only when the
+  // source itself contains a backtick run that would close a Markdown block.
+  return "`".repeat(Math.max(3, longestRun + 1));
+}
+
+function languageForPath(path: string): string {
+  const extension = path.toLowerCase().split(".").at(-1) ?? "";
+  const languages: Record<string, string> = {
+    bash: "bash",
+    c: "c",
+    cc: "cpp",
+    css: "css",
+    cpp: "cpp",
+    go: "go",
+    h: "c",
+    hpp: "cpp",
+    html: "html",
+    java: "java",
+    js: "javascript",
+    json: "json",
+    jsx: "jsx",
+    lua: "lua",
+    md: "markdown",
+    mjs: "javascript",
+    py: "python",
+    rs: "rust",
+    scss: "scss",
+    sh: "bash",
+    sql: "sql",
+    svelte: "svelte",
+    toml: "toml",
+    ts: "typescript",
+    tsx: "tsx",
+    vue: "vue",
+    xml: "xml",
+    yaml: "yaml",
+    yml: "yaml",
+    zig: "zig",
+  };
+  return languages[extension] ?? "text";
+}
+
+function inlineCode(text: string): string {
+  const runs = text.match(/`+/g) ?? [];
+  const longestRun = runs.reduce((longest, run) => Math.max(longest, run.length), 0);
+  const fence = "`".repeat(longestRun + 1);
+  return `${fence}${text}${fence}`;
+}
+
+export function formatContextEnvelope(text: string): string | undefined {
+  const envelope = parseContextEnvelope(text);
+  if (!envelope || envelope.contexts.length === 0) return undefined;
+
+  const sections = envelope.contexts.map((context, index) => {
+    const fence = fenceFor(context.text);
+    return [
+      `### Context ${index + 1}`,
+      "",
+      `- **File path:** ${inlineCode(context.path)}`,
+      `- **Kind:** ${inlineCode(context.kind)}`,
+      `- **Start line:** ${context.start_line}`,
+      `- **End line:** ${context.end_line}`,
+      "",
+      `${fence}${languageForPath(context.path)}`,
+      context.text,
+      fence,
+      blockquote(context.note ?? ""),
+    ].join("\n");
+  });
+  return `${sections.join("\n---\n")}\n---\n${envelope.note}`;
+}

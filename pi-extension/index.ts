@@ -33,6 +33,7 @@ import {
   VERSION,
   canonicalRoot,
   descriptorName,
+  formatContextEnvelope,
   inside,
   parseJson,
   type Finding,
@@ -315,6 +316,16 @@ export default function (pi: ExtensionAPI): void {
       changedPaths: new Set(),
     };
     restoreFindings(runtime);
+  });
+  // Neovim sends the same JSON envelope through both transports: the interactive
+  // socket reaches here through pi.sendUserMessage(), while RPC prompts reach
+  // here directly. Format both at Pi's common input boundary before the model
+  // sees them.
+  pi.on("input", (event) => {
+    const formatted = formatContextEnvelope(event.text);
+    return formatted === undefined
+      ? undefined
+      : { action: "transform", text: formatted };
   });
   pi.on("session_shutdown", () => {
     if (runtime) closeServer(runtime);

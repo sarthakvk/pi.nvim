@@ -81,13 +81,10 @@ function M.attach(root, descriptor, callback)
 					end
 				end
 			elseif event.type == "findings" and current.on_findings_snapshot then
-				current.on_findings_snapshot(
-					event.findings,
-					{
-						origin_session_id = event.session_id or current.session_id,
-						origin_session_file = event.session_file or current.session_file,
-					}
-				)
+				current.on_findings_snapshot(event.findings, {
+					origin_session_id = event.session_id or current.session_id,
+					origin_session_file = event.session_file or current.session_file,
+				})
 			elseif event.type == "tool_activity" then
 				current.known_changes = current.known_changes or {}
 				for _, path in ipairs(event.paths or {}) do
