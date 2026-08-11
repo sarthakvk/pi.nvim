@@ -282,9 +282,6 @@ function M.send_current(opts)
 			start_line = captured.start_line,
 			end_line = captured.end_line,
 			text = captured.text,
-			hash = captured.hash,
-			original_hash = captured.hash,
-			changed_since_added = false,
 			note = opts.args or "",
 		}
 		local request = {

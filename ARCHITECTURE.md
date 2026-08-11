@@ -104,10 +104,9 @@ Turns a buffer into an excerpt read **from disk**.
 - `buffer_is_saved(bufnr)` → `ok, path|reason`; rejects unnamed, modified, or
   externally-changed buffers (CRLF and trailing-newline normalised for the compare).
 - `range(bufnr, first, last)` → excerpt record `{root, path, relative_path,
-  start_line, end_line, text, hash, bufnr}`; `hash` is the **whole file**, so drift
-  outside the range is still detectable.
+  start_line, end_line, text, bufnr}`.
 - `file(bufnr)` → same, tagged `kind = "whole_file"`.
-- `read_range(path, first, last)` → `text, hash` straight from disk, for re-reads.
+- `read_range(path, first, last)` → `text` straight from disk, for re-reads.
 
 ### `draft.lua` — collection, bundling, envelope
 
@@ -120,11 +119,11 @@ namespace `pi.nvim.draft` so it follows edits.
   item is untrustworthy. Callers surface that reason; they never fall back to the
   stale snapshot.
 - `bundle(root, note, max_bytes)` → request `{id, root, note, contexts[]}`. Every
-  excerpt is re-read from disk here, flagged `changed_since_added` when the hash
-  moved, and an oversized bundle is refused, not truncated.
-- `envelope(request)` → the single text message sent to Pi. Section markers are
-  grown until they appear nowhere in any note or excerpt, and byte counts are
-  emitted, so untrusted source text cannot forge or close a section.
+  excerpt is re-read from disk here, and an oversized bundle is refused, not
+  truncated.
+- `envelope(request)` → the single JSON text message sent to Pi, containing the
+  request note and an array of context records. Source text and notes remain
+  JSON data; no textual markers or generated instructions are added.
 
 ### `session.lua` — target selection and state
 
@@ -227,7 +226,7 @@ double load a no-op.
 - **Descriptor** (runtime dir JSON) — `version, root, session_id, session_file,
   display_name, pid, started_at, socket_path, activity, capabilities`.
 - **Request/bundle** — `{id, root, note, contexts: [{id, kind, path, start_line,
-  end_line, text, hash, original_hash, changed_since_added, note}]}`.
+  end_line, text, note}]}`.
 - **Finding** — `{id, request_id, context_item_id?, path, start_line, end_line,
   severity, title, message, expected_text}` (+ `stale`, `origin_session_id`,
   `origin_session_file` on the Neovim side).
@@ -239,13 +238,13 @@ double load a no-op.
 3. Discovery is opt-in — sharing a working directory is not enough.
 4. Findings are diagnostics; nothing in the findings path writes to a source file.
 5. Both ends must agree on `VERSION` and on what a project root is.
-6. Untrusted text (source, notes, model findings) cannot forge envelope structure
-   or escape the root.
+6. Source and notes are sent as JSON data; they do not become envelope structure
+   or bypass project-root validation.
 
 ## Tests
 
 - `npm test` — `tests/lua/run.lua`, offline: capture refusals, extmark tracking,
-  envelope forgery resistance.
+  and JSON envelope data handling.
 - `npm run test:extension` — `tests/extension/rpc-load.test.mjs`, offline: the
   extension loads in `pi --mode rpc` without collision.
 - `npm run test:e2e` — `tests/e2e/socket.mjs` (real Pi, opt-in + handshake) and
