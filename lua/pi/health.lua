@@ -24,7 +24,7 @@ function M.check()
 	else
 		vim.health.error("Companion extension missing: " .. extension)
 	end
-	local runtime = vim.env.XDG_RUNTIME_DIR or vim.fn.stdpath("state") .. "/run"
+	local runtime = require("pi.session").runtime_dir_path()
 	local stat = vim.uv.fs_stat(runtime)
 	-- A missing runtime directory is only a warning: it is created when a Pi
 	-- session first opts in, so its absence just means none has yet.

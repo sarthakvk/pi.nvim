@@ -91,6 +91,9 @@ function M.start(config, root, saved_session, handlers, callback)
 	)
 	if not self.handle then
 		-- On a failed spawn libuv returns the error message where the pid would be.
+		-- The pipes are allocated before the spawn, so they are this function's to
+		-- release.
+		self:close()
 		return callback(nil, "cannot start Pi: " .. tostring(self.pid))
 	end
 	self.stdout:read_start(function(err, data)
@@ -220,7 +223,9 @@ function M:receive(event)
 		if type(path) == "string" then
 			self.changed_paths[path] = true
 		end
-	elseif event.type == "tool_execution_end" and event.toolName == "nvim_publish_findings" then
+	elseif event.type == "tool_execution_end" and event.toolName == "nvim_publish_findings" and not event.isError then
+		-- The tool validates and rejects a batch whole, so only a successful call
+		-- carries findings the editor can trust.
 		local published = event.result and event.result.details and event.result.details.findings
 		if type(published) == "table" and self.handlers.on_findings then
 			self.handlers.on_findings(published, {

@@ -17,13 +17,21 @@ local ui = require("pi.ui")
 ---@field state table<string, pi.SessionState> Per project root; outlives any single transport.
 local M = { state = {} }
 
----@return string
-local function runtime_dir()
+-- Where opted-in Pi sessions advertise themselves. Resolution lives here alone
+-- so `:checkhealth` reports the directory discovery reads, down to treating an
+-- empty XDG_RUNTIME_DIR as unset.
+---@return string directory Absolute; not created, see runtime_dir.
+function M.runtime_dir_path()
 	local base = vim.env.XDG_RUNTIME_DIR
 	if not base or base == "" then
 		base = vim.fn.stdpath("state") .. "/run"
 	end
-	local directory = base .. "/pi.nvim"
+	return base .. "/pi.nvim"
+end
+
+---@return string
+local function runtime_dir()
+	local directory = M.runtime_dir_path()
 	-- 0700: descriptors name a socket that can drive someone's agent session, so
 	-- they must not be readable by other users on the machine.
 	vim.fn.mkdir(directory, "p", "0700")
