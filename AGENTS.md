@@ -22,7 +22,6 @@ permissions; this project is a bridge, not a sandbox or patch-review system.
 - `README.md`: user-facing behavior, installation, configuration, and commands.
 - `ARCHITECTURE.md`: implementation details, data flow, protocol, and change map.
 - `package.json`: available test and typecheck commands.
-- `BUGS.md`: previously observed issues; reproduce them before relying on them.
 - `PROPOSAL.md`: design background and future direction, not current behavior.
 
 ## File Map
