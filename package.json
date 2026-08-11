@@ -4,8 +4,16 @@
   "private": true,
   "description": "A local, editor-first bridge between Neovim and Pi",
   "type": "module",
-  "keywords": ["pi-package", "neovim", "pi"],
-  "pi": { "extensions": ["./pi-extension"] },
+  "keywords": [
+    "pi-package",
+    "neovim",
+    "pi"
+  ],
+  "pi": {
+    "extensions": [
+      "./pi-extension"
+    ]
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
@@ -14,5 +22,8 @@
     "test": "nvim --headless -u NONE -l tests/lua/run.lua",
     "test:extension": "node --test tests/extension/*.test.mjs",
     "test:e2e": "node tests/e2e/socket.mjs && tests/e2e/run-headless.sh"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
   }
 }
