@@ -13,8 +13,10 @@ local M = { drafts = {}, namespace = vim.api.nvim_create_namespace("pi.nvim.draf
 
 -- Neovim has no UUID primitive; hashing the clock, the RNG, and the process id
 -- is enough for ids that only have to be unique across one editor's drafts.
+-- Exported because pi.init needs the same ids for the one-shot bundles that
+-- never enter a draft.
 ---@return string
-local function new_id()
+function M.new_id()
 	return vim.fn.sha256(("%s:%s:%s"):format(vim.loop.hrtime(), math.random(), vim.loop.os_getpid())):sub(1, 32)
 end
 
@@ -39,7 +41,7 @@ function M.add(captured, note)
 	local start_mark = vim.api.nvim_buf_set_extmark(captured.bufnr, M.namespace, captured.start_line - 1, 0, {})
 	local end_mark = vim.api.nvim_buf_set_extmark(captured.bufnr, M.namespace, captured.end_line - 1, 0, {})
 	local item = {
-		id = new_id(),
+		id = M.new_id(),
 		kind = captured.kind or "range",
 		root = captured.root,
 		path = captured.path,
@@ -181,7 +183,7 @@ function M.bundle(root, overall_note, maximum_bytes)
 	if #contexts == 0 then
 		return nil, "the context draft is empty"
 	end
-	local request = { id = new_id(), root = root, note = overall_note or "", contexts = contexts }
+	local request = { id = M.new_id(), root = root, note = overall_note or "", contexts = contexts }
 	local encoded = vim.json.encode(request)
 	-- Oversized bundles are refused instead of truncated so the user decides what
 	-- to drop; failing here leaves the draft untouched for them to narrow.

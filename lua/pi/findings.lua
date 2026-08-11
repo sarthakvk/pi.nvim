@@ -132,7 +132,10 @@ function M.list(root)
 		table.insert(result, finding)
 	end
 	table.sort(result, function(a, b)
-		return a.path .. a.start_line < b.path .. b.start_line
+		if a.path ~= b.path then
+			return a.path < b.path
+		end
+		return a.start_line < b.start_line
 	end)
 	return result
 end

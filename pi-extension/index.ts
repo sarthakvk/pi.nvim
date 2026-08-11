@@ -193,79 +193,88 @@ function respond(
   socket.write(JSON.stringify({ type: "response", id, data, error }) + "\n");
 }
 
+function serveRequest(runtime: Runtime, socket: Socket, rawLine: string): void {
+  const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+  const message = parseJson(line);
+  if (!message) return;
+  if (message.type === "hello") {
+    // The handshake is also the guard: a client on the wrong protocol or a
+    // different project must not be able to drive this session.
+    if (message.version !== VERSION || message.root !== runtime.root)
+      respond(
+        socket,
+        message.id,
+        undefined,
+        "protocol or project root mismatch",
+      );
+    else respond(socket, message.id, descriptor(runtime));
+  } else if (message.type === "send" && typeof message.message === "string") {
+    const delivery =
+      message.delivery === "steer" || message.delivery === "followUp"
+        ? message.delivery
+        : undefined;
+    // Interrupting a working session needs an explicit choice from the user,
+    // so a plain send into a busy Pi is refused rather than guessed at.
+    if (!runtime.ctx.isIdle() && !delivery)
+      respond(
+        socket,
+        message.id,
+        undefined,
+        "Pi is busy; choose steering or follow-up delivery",
+      );
+    else {
+      try {
+        piSend(runtime, message.message, delivery);
+        respond(socket, message.id, { accepted: true });
+      } catch (error) {
+        respond(
+          socket,
+          message.id,
+          undefined,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  } else if (message.type === "clear_findings") {
+    const id =
+      typeof message.id_to_clear === "string" ? message.id_to_clear : undefined;
+    if (id) runtime.findings.delete(id);
+    else runtime.findings.clear();
+    appendEntry(FINDINGS_CLEAR_TYPE, { id });
+    broadcastFindings(runtime);
+    respond(socket, message.id, { cleared: id });
+  } else respond(socket, message.id, undefined, "unsupported bridge request");
+}
+
 function serveClient(runtime: Runtime, socket: Socket): void {
   runtime.clients.add(socket);
   let buffer = "";
   // A decoder rather than chunk.toString(): a multi-byte character can be split
   // across two reads, and source text is routinely non-ASCII.
   const decoder = new StringDecoder("utf8");
-  socket.on("data", (chunk: Buffer) => {
-    buffer += decoder.write(chunk);
+  // `final` also serves whatever is left without a trailing newline, which is
+  // how a client that closes immediately after writing sends its last message.
+  const consume = (final: boolean) => {
     while (true) {
       const newline = buffer.indexOf("\n");
       if (newline < 0) break;
-      let line = buffer.slice(0, newline);
+      const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      const message = parseJson(line);
-      if (!message) continue;
-      if (message.type === "hello") {
-        // The handshake is also the guard: a client on the wrong protocol or a
-        // different project must not be able to drive this session.
-        if (message.version !== VERSION || message.root !== runtime.root)
-          respond(
-            socket,
-            message.id,
-            undefined,
-            "protocol or project root mismatch",
-          );
-        else respond(socket, message.id, descriptor(runtime));
-      } else if (
-        message.type === "send" &&
-        typeof message.message === "string"
-      ) {
-        const delivery =
-          message.delivery === "steer" || message.delivery === "followUp"
-            ? message.delivery
-            : undefined;
-        // Interrupting a working session needs an explicit choice from the user,
-        // so a plain send into a busy Pi is refused rather than guessed at.
-        if (!runtime.ctx.isIdle() && !delivery)
-          respond(
-            socket,
-            message.id,
-            undefined,
-            "Pi is busy; choose steering or follow-up delivery",
-          );
-        else {
-          try {
-            piSend(runtime, message.message, delivery);
-            respond(socket, message.id, { accepted: true });
-          } catch (error) {
-            respond(
-              socket,
-              message.id,
-              undefined,
-              error instanceof Error ? error.message : String(error),
-            );
-          }
-        }
-      } else if (message.type === "clear_findings") {
-        const id =
-          typeof message.id_to_clear === "string"
-            ? message.id_to_clear
-            : undefined;
-        if (id) runtime.findings.delete(id);
-        else runtime.findings.clear();
-        appendEntry(FINDINGS_CLEAR_TYPE, { id });
-        broadcastFindings(runtime);
-        respond(socket, message.id, { cleared: id });
-      } else
-        respond(socket, message.id, undefined, "unsupported bridge request");
+      serveRequest(runtime, socket, line);
     }
+    if (final && buffer.length > 0) {
+      const line = buffer;
+      buffer = "";
+      serveRequest(runtime, socket, line);
+    }
+  };
+  socket.on("data", (chunk: Buffer) => {
+    buffer += decoder.write(chunk);
+    consume(false);
   });
   socket.on("end", () => {
     buffer += decoder.end();
+    consume(true);
   });
   socket.on("close", () => runtime.clients.delete(socket));
   socket.on("error", () => runtime.clients.delete(socket));
@@ -305,11 +314,24 @@ function enable(runtime: Runtime): string {
   // A socket left behind by a crashed session with the same id would block bind.
   if (existsSync(runtime.socketPath))
     rmSync(runtime.socketPath, { force: true });
-  runtime.server = createServer((client) => serveClient(runtime, client));
+  const server = createServer((client) => serveClient(runtime, client));
+  runtime.server = server;
   // The descriptor is only published once the socket is actually accepting, so
   // Neovim never finds an address it cannot connect to.
-  runtime.server.once("listening", () => writeDescriptor(runtime));
-  runtime.server.listen(runtime.socketPath);
+  server.once("listening", () => writeDescriptor(runtime));
+  // An unhandled 'error' would take Pi's whole process down, and a listen can
+  // fail for reasons outside this session's control (EACCES, EADDRINUSE).
+  server.on("error", (error: Error) => {
+    // Only tear the runtime down while this server is still the current one: a
+    // later enable may have replaced it, and that one's socket must survive.
+    if (runtime.server === server) closeServer(runtime);
+    else server.close();
+    runtime.ctx.ui.notify(
+      `Pi bridge could not listen: ${error.message}`,
+      "error",
+    );
+  });
+  server.listen(runtime.socketPath);
   return `Pi bridge is enabling for ${runtime.root}`;
 }
 
@@ -323,6 +345,9 @@ export default function (pi: ExtensionAPI): void {
   appendEntry = pi.appendEntry.bind(pi);
 
   pi.on("session_start", (_event, ctx) => {
+    // The runtime is replaced below, and a socket and descriptor it still owns
+    // would go on advertising a session nothing serves any more.
+    if (runtime) closeServer(runtime);
     const root = canonicalRoot(ctx.cwd);
     runtime = {
       root,

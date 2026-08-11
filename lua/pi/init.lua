@@ -213,7 +213,13 @@ function M.context_add(opts)
 	if note then
 		add_with_note(note)
 	else
-		ui.input("Context note (optional): ", add_with_note)
+		ui.input("Context note (optional): ", function(entered)
+			-- nil is a cancelled prompt, which abandons the add; an empty string is an
+			-- answered prompt with no note.
+			if entered ~= nil then
+				add_with_note(entered)
+			end
+		end)
 	end
 end
 
@@ -303,8 +309,11 @@ function M.send_current(opts)
 		if not captured then
 			return ui.notify("Cannot send Pi context: " .. err, vim.log.levels.WARN)
 		end
+		-- Ids come from pi.draft even though this bundle never enters one: Pi
+		-- addresses findings by these ids, so the two below must differ from each
+		-- other and from every id another send produces.
 		local item = {
-			id = vim.fn.sha256(tostring(vim.loop.hrtime())):sub(1, 16),
+			id = draft.new_id(),
 			kind = captured.kind or "range",
 			path = captured.relative_path,
 			start_line = captured.start_line,
@@ -313,7 +322,7 @@ function M.send_current(opts)
 			note = opts.args or "",
 		}
 		local request = {
-			id = vim.fn.sha256(tostring(vim.loop.hrtime())):sub(1, 16),
+			id = draft.new_id(),
 			root = captured.root,
 			note = note,
 			contexts = { item },
@@ -338,23 +347,48 @@ function M.attach()
 	end)
 end
 
--- :PiSessions — lists what this project could talk to. Display only.
+-- :PiSessions — lists what this project could talk to and attaches to the one
+-- the user picks. The attached session is listed for orientation only: it
+-- carries no descriptor, so choosing it is a no-op.
 function M.sessions()
-	local root, current_session = current_root(), session.get(current_root())
-	local choices = session.discover(root)
-	if current_session.transport then
-		table.insert(
-			choices,
-			1,
-			{ display_name = "attached " .. (current_session.session_id or "Pi"), attached = true }
-		)
+	local root = current_root()
+	local current_session = session.get(root)
+	local attached_id = current_session.transport and current_session.session_id or nil
+	---@type { label: string, descriptor: pi.Descriptor? }[]
+	local choices = {}
+	for _, descriptor in ipairs(session.discover(root)) do
+		local attached = attached_id ~= nil and descriptor.session_id == attached_id
+		table.insert(choices, {
+			label = (descriptor.display_name or descriptor.session_id)
+				.. " (pid "
+				.. descriptor.pid
+				.. (attached and ", attached)" or ")"),
+			descriptor = not attached and descriptor or nil,
+		})
+	end
+	-- A headless worker publishes no descriptor, so discovery cannot see it; the
+	-- local state is the only place it is known.
+	if current_session.transport and current_session.mode == "headless" then
+		table.insert(choices, 1, { label = "headless " .. (current_session.session_id or "Pi") .. " (attached)" })
 	end
 	if #choices == 0 then
 		return ui.notify("No Pi sessions available")
 	end
 	ui.select(choices, "Pi sessions", function(item)
-		return item.display_name or item.session_id
-	end, function() end)
+		return item.label
+	end, function(choice)
+		if not choice or not choice.descriptor then
+			return
+		end
+		install_session_handlers(root)
+		session.attach(root, choice.descriptor, function(_, err)
+			if err then
+				ui.notify(err, vim.log.levels.WARN)
+			else
+				ui.notify("Attached Pi terminal session")
+			end
+		end)
+	end)
 end
 
 -- :PiFindings

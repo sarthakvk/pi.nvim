@@ -34,6 +34,16 @@ child.stdout.on("data", (chunk) => {
   output += chunk;
 });
 
+// The pty fills the output with terminal control sequences, so anything matched
+// against it is matched against the stripped text.
+const CONTROL_SEQUENCES =
+  /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+// Pi prints its name and version before it accepts input, and that banner is
+// the same whatever model the machine running this test has configured.
+function piStarted() {
+  return /\bpi\s+v\d+\.\d+\.\d+/.test(output.replace(CONTROL_SEQUENCES, ""));
+}
+
 // Pi's output is the only progress signal available, so the whole test is
 // written as polls with a deadline; the tail of the output goes into failures
 // because it is usually the reason.
@@ -53,10 +63,7 @@ function waitFor(predicate, message) {
 }
 
 try {
-  await waitFor(
-    () => output.includes("gpt-5.6"),
-    "interactive Pi did not start",
-  );
+  await waitFor(piStarted, "interactive Pi did not start");
   child.stdin.write("/nvim-bridge enable\r");
   // Resolved the same way the extension does, so the test looks where a real
   // session would actually have published itself.
@@ -100,6 +107,33 @@ try {
   assert.equal(response.data.root, project);
   assert.equal(response.data.version, 1);
   socket.destroy();
+
+  // A client that closes right after writing leaves its last message without a
+  // trailing newline; the bridge must still serve it.
+  const halfOpen = createConnection({
+    path: descriptor.value.socket_path,
+    allowHalfOpen: true,
+  });
+  let halfOpenReceived = "";
+  halfOpen.on("data", (chunk) => {
+    halfOpenReceived += chunk;
+  });
+  await new Promise((resolve, reject) =>
+    halfOpen.once("connect", resolve).once("error", reject),
+  );
+  halfOpen.end(
+    JSON.stringify({
+      id: "unterminated",
+      type: "hello",
+      version: 1,
+      root: project,
+    }),
+  );
+  await waitFor(
+    () => halfOpenReceived.includes('"id":"unterminated"'),
+    "bridge dropped a message that arrived without a trailing newline",
+  );
+  halfOpen.destroy();
   // Killing Pi below skips its shutdown hook, so clean up what it published.
   rmSync(join(runtime, descriptor.name), { force: true });
   rmSync(descriptor.value.socket_path, { force: true });
