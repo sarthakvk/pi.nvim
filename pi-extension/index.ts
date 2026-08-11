@@ -192,6 +192,7 @@ export default function (pi: ExtensionAPI): void {
   if (guarded[GUARD]) return;
   guarded[GUARD] = true;
   let runtime: Runtime | undefined;
+  const changedToolPaths = new Map<string, string | undefined>();
   sendUserMessage = pi.sendUserMessage.bind(pi);
 
   pi.on("session_start", (_event, ctx) => {
@@ -199,7 +200,7 @@ export default function (pi: ExtensionAPI): void {
     runtime = { root, ctx, clients: new Set(), findings: new Map(), changedPaths: new Set() };
     restoreFindings(runtime);
   });
-  pi.on("session_shutdown", () => { if (runtime) closeServer(runtime); runtime = undefined; });
+  pi.on("session_shutdown", () => { changedToolPaths.clear(); if (runtime) closeServer(runtime); runtime = undefined; });
   pi.on("agent_start", () => { if (runtime) { runtime.changedPaths.clear(); writeDescriptor(runtime); emit(runtime, { type: "activity", state: "working" }); } });
   pi.on("agent_settled", () => {
     if (!runtime) return;
@@ -209,11 +210,18 @@ export default function (pi: ExtensionAPI): void {
     if (paths.length > 0) emit(runtime, { type: "tool_activity", paths });
     writeDescriptor(runtime); emit(runtime, { type: "activity", state: "idle" });
   });
+  pi.on("tool_execution_start", (event) => {
+    if (event.toolName !== "edit" && event.toolName !== "write") return;
+    const args = event.args as { path?: unknown } | undefined;
+    changedToolPaths.set(event.toolCallId, typeof args?.path === "string" ? args.path : undefined);
+  });
   pi.on("tool_execution_end", (event) => {
-    // Only the tools that name a path can be tracked, so this is a hint for
-    // Neovim's reload check and never a complete audit trail of the turn.
+    // tool_execution_end does not carry args in Pi's extension API, so recover
+    // the path captured at start. This is a hint for Neovim's reload check and
+    // never a complete audit trail of the turn.
+    const path = changedToolPaths.get(event.toolCallId);
+    changedToolPaths.delete(event.toolCallId);
     if (!runtime || event.isError || (event.toolName !== "edit" && event.toolName !== "write")) return;
-    const path = (event.args as { path?: unknown }).path;
     const relativePath = typeof path === "string" && inside(runtime.root, path);
     if (relativePath) runtime.changedPaths.add(relativePath);
   });
