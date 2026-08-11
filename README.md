@@ -185,5 +185,6 @@ the current turn or wait as a follow-up.
 
 ## Development
 
-Contributor guidance lives in [AGENTS.md](AGENTS.md). See
-[ARCHITECTURE.md](ARCHITECTURE.md) for the implementation and protocol design.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the implementation and protocol
+design. [AGENTS.md](AGENTS.md) provides a concise repository map for coding
+agents.

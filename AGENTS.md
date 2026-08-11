@@ -1,116 +1,71 @@
-# Contributor Guide
+# Agent Map
 
-## Project Overview
+This file is a lightweight starting point for coding agents, not a source of
+truth. Confirm behavior in the implementation and tests before making changes.
 
-pi.nvim is a two-part bridge between Neovim and Pi:
+## Project
 
-- The Lua plugin captures saved source, manages per-project context drafts and
-  sessions, and renders findings as Neovim diagnostics.
-- The TypeScript Pi extension exposes an explicitly enabled local socket for
-  interactive sessions and adds the `nvim_publish_findings` tool.
+pi.nvim is a local bridge between Neovim and [Pi](https://pi.dev). It has two
+parts:
 
-The same extension is loaded by headless Pi workers over RPC. Read
-`ARCHITECTURE.md` before changing transport, session, context, or findings
-behavior.
+- a Lua Neovim plugin that captures saved source, sends context, manages Pi
+  sessions, and displays findings as diagnostics;
+- a TypeScript Pi extension that serves opted-in terminal sessions, runs in
+  headless RPC workers, and publishes findings back to Neovim.
 
-## Core Invariants
+Interactive sessions use a local Unix socket after `/nvim-bridge enable`.
+Headless sessions use Pi's NDJSON RPC mode. Pi keeps its normal tools and
+permissions; this project is a bridge, not a sandbox or patch-review system.
 
-Preserve these behaviors unless a change explicitly replaces them:
+## Start Here
 
-1. Only saved, on-disk source is sent. Never save a buffer for the user or send
-   unsaved content.
-2. Pi never starts or receives steering input without an explicit user action.
-3. Interactive session discovery is opt-in through `/nvim-bridge enable`.
-   Sharing a project root is not sufficient.
-4. Findings are diagnostics and never write source files.
-5. Modified buffers are never automatically reloaded after Pi changes a file.
-6. Both sides must agree on the wire version and canonical project root.
-7. Oversized context bundles are rejected as a whole rather than truncated.
+- `README.md`: user-facing behavior, installation, configuration, and commands.
+- `ARCHITECTURE.md`: implementation details, data flow, protocol, and change map.
+- `package.json`: available test and typecheck commands.
+- `BUGS.md`: previously observed issues; reproduce them before relying on them.
+- `PROPOSAL.md`: design background and future direction, not current behavior.
 
-Pi workers inherit the user's normal Pi settings, authentication, extensions,
-tools, and permission policy. They are not read-only or sandboxed. Edit/write
-events are only reload hints and must not be presented as a complete audit log.
-
-## Repository Layout
+## File Map
 
 ```text
-plugin/pi.lua                 :Pi* command definitions and startup entry point
-lua/pi/init.lua               public setup and user-visible command flow
-lua/pi/context.lua            saved-buffer and range capture
-lua/pi/draft.lua              context drafts, bundling, and wire envelope
-lua/pi/session.lua            discovery, attach, headless lifecycle, state
-lua/pi/transport/socket.lua   interactive Pi socket client
-lua/pi/transport/rpc.lua      headless Pi RPC client
-lua/pi/findings.lua           finding storage and Neovim diagnostics
-lua/pi/ui.lua                 prompts, pickers, and scratch buffers
-lua/pi/project.lua            project roots, containment, persisted state paths
-lua/pi/health.lua             :checkhealth pi checks
-lua/pi/types.lua              definition-only Lua types
-pi-extension/index.ts         Pi commands, socket server, and findings tool
-pi-extension/protocol.ts      wire types, validation, and path handling
-tests/                        Lua, extension, and end-to-end coverage
+plugin/pi.lua                Neovim command entry points
+lua/pi/init.lua              public API and command flow
+lua/pi/context.lua           saved-file and range capture
+lua/pi/draft.lua             context drafts and request bundles
+lua/pi/session.lua           target selection and session lifecycle
+lua/pi/transport/socket.lua  interactive-session transport
+lua/pi/transport/rpc.lua     headless-worker transport
+lua/pi/findings.lua          finding storage and diagnostics
+lua/pi/ui.lua                prompts and temporary buffers
+lua/pi/project.lua           roots, containment, and state paths
+lua/pi/health.lua            :checkhealth pi
+lua/pi/types.lua             definition-only Lua types
+pi-extension/index.ts        Pi extension and socket server
+pi-extension/protocol.ts     wire types, validation, and path rules
+tests/lua/                   headless Neovim tests
+tests/extension/             extension tests
+tests/e2e/                   live socket and headless integration tests
 ```
 
-## Development Commands
+## Important Seams
 
-Install JavaScript dependencies with `npm install`.
+- Source context comes from saved files on disk; modified or stale buffers are
+  rejected rather than saved or sent.
+- Findings are editor diagnostics and do not write source files.
+- Root containment and wire shapes cross the Lua/TypeScript boundary. Check
+  `lua/pi/types.lua`, `lua/pi/project.lua`, and `pi-extension/protocol.ts`
+  together when changing them.
+- Interactive discovery is explicit, and headless Pi starts only from a user
+  send. Session and transport changes can affect both paths.
 
-```sh
-npm test
-npm run test:extension
-npm run typecheck
-```
+## Verification
 
-- `npm test` runs deterministic Lua tests in headless Neovim.
-- `npm run test:extension` checks that the Pi extension loads over RPC.
-- `npm run typecheck` runs strict TypeScript checking and Lua language-server
-  diagnostics. It requires `nvim` and `lua-language-server` on `PATH`.
-- `npm run test:e2e` exercises a real opted-in socket and a live headless model
-  turn. It requires an installed, authenticated Pi and sends the test prompt to
-  the configured model provider.
+- `npm test`: Lua tests in headless Neovim.
+- `npm run test:extension`: deterministic Pi extension tests.
+- `npm run typecheck`: TypeScript and Lua language-server checks.
+- `npm run test:e2e`: live integration checks; requires authenticated Pi and
+  sends prompts to the configured model provider.
 
-Run the deterministic tests and type checks for normal changes. Run end-to-end
-tests when changing discovery, transports, RPC handling, session lifecycle, or
-the extension integration and the required model access is available.
-
-## Type and Protocol Changes
-
-Lua records marked `wire` in `lua/pi/types.lua` have hand-maintained TypeScript
-counterparts in `pi-extension/protocol.ts`; update both sides together.
-
-The repository pins the native TypeScript 7 compiler, which does not ship
-`tsserver`. To use the same compiler in Neovim that `npm run typecheck` uses:
-
-```lua
-vim.lsp.config("tsgo", {
-  cmd = { "node_modules/.bin/tsc", "--lsp", "--stdio" },
-  filetypes = { "typescript" },
-  root_markers = { "tsconfig.json", "package.json", ".git" },
-})
-vim.lsp.enable("tsgo")
-```
-
-`.luarc.json` points `workspace.library` at `$VIMRUNTIME/lua`. The Lua typecheck
-script obtains that path from Neovim instead of recording a machine-specific
-path in the repository.
-
-When changing the socket protocol, update both transports and the extension.
-Bump the protocol version for incompatible changes. Keep source text and notes
-as JSON data rather than interpolating them into protocol structure.
-
-## Change Map
-
-| Goal | Start at |
-| --- | --- |
-| Add or change a `:Pi*` command | `plugin/pi.lua` and `lua/pi/init.lua` |
-| Change capture or stale-buffer rules | `lua/pi/context.lua` |
-| Change draft behavior or message payloads | `lua/pi/draft.lua` |
-| Change target selection or fallback behavior | `lua/pi/init.lua` and `lua/pi/session.lua` |
-| Change interactive bridge requests or events | `lua/pi/transport/socket.lua` and `pi-extension/index.ts` |
-| Change headless RPC behavior | `lua/pi/transport/rpc.lua` |
-| Change findings rendering or staleness | `lua/pi/findings.lua` |
-| Change root or containment rules | `lua/pi/project.lua` and `pi-extension/protocol.ts` |
-
-Keep the public README focused on installation, setup, workflows, configuration,
-commands, and user-visible limitations. Put implementation details here or in
-`ARCHITECTURE.md`.
+Choose checks based on the files changed. Use `ARCHITECTURE.md` and nearby tests
+to locate the relevant behavior rather than expanding this file into a second
+manual.
