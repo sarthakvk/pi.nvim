@@ -3,5 +3,6 @@
   "runtime.version": "LuaJIT",
   "runtime.path": ["lua/?.lua", "lua/?/init.lua"],
   "workspace.library": ["$VIMRUNTIME/lua"],
-  "workspace.checkThirdParty": false
+  "workspace.checkThirdParty": false,
+  "workspace.ignoreDir": [".vscode"]
 }
