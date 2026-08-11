@@ -76,6 +76,41 @@ integration.
 turn, so it requires an authenticated Pi model and sends the test prompt to its
 configured provider.
 
+`npm run typecheck` runs both type checkers and exits non-zero on any
+diagnostic:
+
+- `typecheck:ts` runs `tsc --noEmit` over `pi-extension/` using `tsconfig.json`
+  (`strict`, plus `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`).
+- `typecheck:lua` runs `lua-language-server --check` over the repository using
+  `.luarc.json`, and needs both `lua-language-server` and `nvim` on `PATH`.
+  `workspace.library` points at `$VIMRUNTIME/lua`, where the `vim.*` and `uv.*`
+  definitions live; the editor's server inherits that variable from Neovim, so
+  the script sets it from `nvim` rather than writing an install-specific path
+  into `.luarc.json`.
+
+## Development
+
+Both languages are annotated for their language server, so the editor reports
+the same diagnostics CI does.
+
+The Lua types live in `lua/pi/types.lua`, a definition-only file that is never
+required at runtime. The records marked `wire` there have a hand-maintained
+counterpart in `pi-extension/protocol.ts` and must be changed together.
+
+For TypeScript, note that the pinned `typescript` 7 is the native compiler and
+ships no `tsserver`, so an editor left to its own devices will type-check with a
+different, bundled TypeScript. To use the exact compiler `npm run typecheck`
+uses, point Neovim at its LSP mode:
+
+```lua
+vim.lsp.config("tsgo", {
+  cmd = { "node_modules/.bin/tsc", "--lsp", "--stdio" },
+  filetypes = { "typescript" },
+  root_markers = { "tsconfig.json", "package.json", ".git" },
+})
+vim.lsp.enable("tsgo")
+```
+
 ## Boundaries
 
 Version 1 does not isolate, accept, reject, or stage Pi edits. Pi tools can

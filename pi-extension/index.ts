@@ -16,7 +16,6 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import {
   chmodSync,
@@ -51,13 +50,25 @@ const FINDINGS_CLEAR_TYPE = "pi.nvim/findings-clear";
 type Runtime = {
   root: string;
   ctx: ExtensionContext;
-  server?: Server;
+  // Explicitly nullable rather than merely optional: closeServer clears this to
+  // mark the session undiscoverable again, so undefined is a value it takes.
+  server?: Server | undefined;
   socketPath?: string;
   descriptorPath?: string;
   clients: Set<Socket>;
   findings: Map<string, Finding>;
   changedPaths: Set<string>;
 };
+
+// Pi's own StringEnum, inlined. It is exported from @earendil-works/pi-ai at
+// runtime but absent from that package's published .d.ts, and the package only
+// exists nested under pi-coding-agent, so neither the import nor its type
+// resolves from here. The emitted schema is identical: a plain string enum
+// rather than anyOf/const, which is what Google's API and some other providers
+// require.
+function stringEnum<T extends readonly string[]>(values: T) {
+  return Type.Unsafe<T[number]>({ type: "string", enum: values });
+}
 
 function runtimeDirectory(): string {
   const stateHome =
@@ -246,9 +257,7 @@ function serveClient(runtime: Runtime, socket: Socket): void {
             : undefined;
         if (id) runtime.findings.delete(id);
         else runtime.findings.clear();
-        runtime.ctx.sessionManager.appendCustomEntry(FINDINGS_CLEAR_TYPE, {
-          id,
-        });
+        appendEntry(FINDINGS_CLEAR_TYPE, { id });
         broadcastFindings(runtime);
         respond(socket, message.id, { cleared: id });
       } else
@@ -271,6 +280,11 @@ let sendUserMessage: (
   message: string,
   options?: { deliverAs?: "steer" | "followUp" },
 ) => void;
+// ctx.sessionManager is a ReadonlySessionManager, which deliberately omits the
+// mutating methods; pi.appendEntry is the sanctioned way for an extension to
+// persist a custom entry. Captured here because the socket handlers run long
+// after the extension's registration call returns.
+let appendEntry: (customType: string, data?: unknown) => void;
 function piSend(
   runtime: Runtime,
   message: string,
@@ -306,6 +320,7 @@ export default function (pi: ExtensionAPI): void {
   let runtime: Runtime | undefined;
   const changedToolPaths = new Map<string, string | undefined>();
   sendUserMessage = pi.sendUserMessage.bind(pi);
+  appendEntry = pi.appendEntry.bind(pi);
 
   pi.on("session_start", (_event, ctx) => {
     const root = canonicalRoot(ctx.cwd);
@@ -389,7 +404,7 @@ export default function (pi: ExtensionAPI): void {
         const id = args.trim().split(/\s+/, 2)[1];
         if (id) runtime.findings.delete(id);
         else runtime.findings.clear();
-        pi.appendEntry(FINDINGS_CLEAR_TYPE, { id });
+        appendEntry(FINDINGS_CLEAR_TYPE, { id });
         broadcastFindings(runtime);
         ctx.ui.notify("Pi findings cleared", "info");
       } else
@@ -417,7 +432,7 @@ export default function (pi: ExtensionAPI): void {
           path: Type.String(),
           start_line: Type.Integer(),
           end_line: Type.Integer(),
-          severity: StringEnum([
+          severity: stringEnum([
             "error",
             "warning",
             "information",

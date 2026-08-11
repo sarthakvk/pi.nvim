@@ -9,22 +9,66 @@
 -- Neovim. libuv callbacks arrive off the main loop, so each one re-enters
 -- through vim.schedule before touching Neovim state.
 
-local project = require("pi.project")
 local ui = require("pi.ui")
 
+-- Every field the worker accumulates, declared up front: they are assigned
+-- across the constructor and the libuv callbacks it installs, which gives
+-- lua-language-server nothing to infer from at the point of use.
+---@class pi.Rpc
+---@field config pi.Config
+---@field root string
+---@field handlers pi.RpcHandlers
+---@field pending table<string, fun(data: table?, err: string?)> In-flight requests by id.
+---@field stderr string Accumulated; reported in one piece if the worker dies.
+---@field changed_paths table<string, boolean>
+---@field stdin uv.uv_pipe_t
+---@field stdout uv.uv_pipe_t
+---@field stderr_pipe uv.uv_pipe_t
+---@field handle uv.uv_process_t? Nil when the spawn failed.
+---@field pid integer|string The libuv error message when the spawn failed.
+---@field state pi.RpcState? Set once get_state is answered.
+---@field buffer string? Partial tail of the last read.
+---@field latest_response string? Last full assistant reply, for :PiResponse.
+---@field exited boolean?
+---@field closed boolean?
 local M = {}
 M.__index = M
 
+---@return string
 local function request_id()
 	return vim.fn.sha256(tostring(vim.loop.hrtime()) .. tostring(math.random())):sub(1, 16)
 end
 
+-- Spawns the worker and calls back once it has answered get_state, so the caller
+-- never receives a transport that cannot yet be addressed.
+---@param config pi.Config
+---@param root string
+---@param saved_session pi.SavedSession? Resumed when its session file still exists.
+---@param handlers pi.RpcHandlers?
+---@param callback fun(worker: pi.Rpc?, err: string?)
 function M.start(config, root, saved_session, handlers, callback)
+	-- Cast rather than annotate: the remaining fields are filled in below and by
+	-- the libuv callbacks, so the literal is deliberately partial here.
 	local self = setmetatable(
 		{ config = config, root = root, handlers = handlers or {}, pending = {}, stderr = "", changed_paths = {} },
 		M
-	)
-	self.stdin, self.stdout, self.stderr_pipe = vim.uv.new_pipe(false), vim.uv.new_pipe(false), vim.uv.new_pipe(false)
+	) --[[@as pi.Rpc]]
+	-- new_pipe returns nil when the process is out of file descriptors. Report that
+	-- through the same path as a failed spawn instead of indexing nil below.
+	local stdin, stdout, stderr_pipe = vim.uv.new_pipe(false), vim.uv.new_pipe(false), vim.uv.new_pipe(false)
+	if not (stdin and stdout and stderr_pipe) then
+		if stdin then
+			stdin:close()
+		end
+		if stdout then
+			stdout:close()
+		end
+		if stderr_pipe then
+			stderr_pipe:close()
+		end
+		return callback(nil, "cannot start Pi: cannot allocate stdio pipes")
+	end
+	self.stdin, self.stdout, self.stderr_pipe = stdin, stdout, stderr_pipe
 	local args = { "--mode", "rpc", "--extension", config.extension_path }
 	-- Resuming keeps one conversation per project across restarts; a session file
 	-- that has since been deleted is skipped rather than failing the spawn.
@@ -122,6 +166,7 @@ end
 
 -- Reads arrive in arbitrary chunks, so complete lines are cut out of a running
 -- buffer and any partial tail is kept for the next read.
+---@param data string
 function M:feed(data)
 	self.buffer = (self.buffer or "") .. data
 	while true do
@@ -145,6 +190,7 @@ function M:feed(data)
 	end
 end
 
+---@param event table One decoded RPC frame: a response, a stream event, or a UI request.
 function M:receive(event)
 	if event.type == "response" and event.id and self.pending[event.id] then
 		local callback = self.pending[event.id]
@@ -193,6 +239,7 @@ end
 
 -- Serves the UI primitives an extension running inside headless Pi would
 -- normally get from Pi's own terminal, mapping each to its Neovim equivalent.
+---@param event table
 function M:ui_request(event)
 	local function respond(payload)
 		payload.type, payload.id = "extension_ui_response", event.id
@@ -219,10 +266,13 @@ function M:ui_request(event)
 			respond(value and { value = value } or { cancelled = true })
 		end)
 	elseif event.method == "notify" then
+		-- Trailing `or nil` so an unrecognised notifyType yields nil rather than
+		-- false, and ui.notify's own default applies.
 		ui.notify(
 			event.message,
 			event.notifyType == "error" and vim.log.levels.ERROR
 				or event.notifyType == "warning" and vim.log.levels.WARN
+				or nil
 		)
 	elseif event.method == "setStatus" and self.handlers.on_status then
 		self.handlers.on_status(event.statusKey, event.statusText)
@@ -235,6 +285,9 @@ function M:ui_request(event)
 	end
 end
 
+-- Fire-and-forget; a closed worker silently drops the write rather than raising
+-- on a dead pipe.
+---@param command table
 function M:command(command)
 	if self.closed then
 		return
@@ -242,12 +295,17 @@ function M:command(command)
 	self.stdin:write(vim.json.encode(command) .. "\n")
 end
 
+---@param command table Gains an `id` field, which the reply is matched on.
+---@param callback fun(data: table?, err: string?)
 function M:request(command, callback)
 	command.id = request_id()
 	self.pending[command.id] = callback
 	self:command(command)
 end
 
+---@param message string
+---@param delivery "steer"|"followUp"|nil
+---@param callback fun(data: table?, err: string?)
 function M:send(message, delivery, callback)
 	local command = { type = "prompt", message = message }
 	if delivery then
@@ -257,6 +315,8 @@ function M:send(message, delivery, callback)
 end
 
 -- Pi's RPC protocol dispatches extension slash commands immediately without an LLM turn.
+---@param command string Slash command without its leading slash.
+---@param callback fun(data: table?, err: string?)
 function M:extension_command(command, callback)
 	self:request({ type = "prompt", message = "/" .. command }, callback)
 end
@@ -273,6 +333,7 @@ function M:stop()
 	end
 end
 
+---@param reason string? Error reported to every in-flight request.
 function M:close(reason)
 	if self.closed then
 		return

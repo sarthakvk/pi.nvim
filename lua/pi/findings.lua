@@ -6,6 +6,9 @@
 
 local project = require("pi.project")
 
+---@class pi.findings
+---@field by_root table<string, table<string, pi.StoredFinding>> Findings by project root, then by finding id.
+---@field namespace integer Diagnostic namespace these annotations are set in.
 local M = { by_root = {}, namespace = vim.api.nvim_create_namespace("pi.nvim.findings") }
 
 local severity = {
@@ -15,21 +18,32 @@ local severity = {
 	hint = vim.diagnostic.severity.HINT,
 }
 
+---@param root string
+---@return table<string, pi.StoredFinding>
 local function findings_for_root(root)
 	M.by_root[root] = M.by_root[root] or {}
 	return M.by_root[root]
 end
 
+---@param root string
+---@param relative_path string
+---@return integer? bufnr Nil when the file has no buffer.
 local function bufnr_for(root, relative_path)
 	local path = root .. "/" .. relative_path
 	local bufnr = vim.fn.bufnr(path, false)
 	return bufnr > 0 and bufnr or nil
 end
 
+---@param bufnr integer
+---@param first_line integer One-based, inclusive.
+---@param last_line integer One-based, inclusive.
+---@return string
 local function buffer_text(bufnr, first_line, last_line)
 	return table.concat(vim.api.nvim_buf_get_lines(bufnr, first_line - 1, last_line, false), "\n")
 end
 
+-- Re-marks every finding stale or fresh against the loaded buffers, then redraws.
+---@param root string
 function M.revalidate(root)
 	for _, finding in pairs(findings_for_root(root)) do
 		local bufnr = bufnr_for(root, finding.path)
@@ -42,6 +56,8 @@ function M.revalidate(root)
 	M.render(root)
 end
 
+-- Pushes the current set into vim.diagnostic for every buffer in the project.
+---@param root string
 function M.render(root)
 	local diagnostics_by_buffer = {}
 	for _, finding in pairs(findings_for_root(root)) do
@@ -71,6 +87,10 @@ function M.render(root)
 	end
 end
 
+-- Merges a batch in, dropping anything that resolves outside the project.
+---@param root string
+---@param findings pi.Finding[]
+---@param origin pi.FindingOrigin?
 function M.publish(root, findings, origin)
 	local store = findings_for_root(root)
 	for _, finding in ipairs(findings) do
@@ -85,11 +105,16 @@ end
 
 -- Used for a full snapshot from Pi, where absent findings mean cleared rather
 -- than unchanged.
+---@param root string
+---@param findings pi.Finding[]
+---@param origin pi.FindingOrigin?
 function M.replace(root, findings, origin)
 	M.by_root[root] = {}
 	M.publish(root, findings, origin)
 end
 
+---@param root string
+---@param id string? A single finding to drop, or nil to clear them all.
 function M.clear(root, id)
 	if id then
 		findings_for_root(root)[id] = nil
@@ -99,6 +124,8 @@ function M.clear(root, id)
 	M.render(root)
 end
 
+---@param root string
+---@return pi.StoredFinding[] findings Ordered by path, then start line.
 function M.list(root)
 	local result = {}
 	for _, finding in pairs(findings_for_root(root)) do
@@ -113,6 +140,8 @@ end
 -- Resolves the finding the user means: the line under the cursor in the
 -- :PiFindings listing, or failing that a finding whose range covers the cursor
 -- in a source buffer.
+---@param root string
+---@return pi.StoredFinding? finding Nil when the cursor is on nothing.
 function M.at_cursor(root)
 	local bufnr = vim.api.nvim_get_current_buf()
 	local ids_by_line = vim.b[bufnr].pi_finding_ids

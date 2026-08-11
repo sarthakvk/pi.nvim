@@ -48,7 +48,13 @@ assert(bundle, bundle_err)
 assert(#bundle.contexts == 2)
 assert(bundle.contexts[1].path == "one.txt")
 assert(bundle.contexts[2].text == "epsilon")
+-- Neither field is part of the bundle format any more. lua-language-server flags
+-- them as undefined precisely because pi.BundleContext no longer declares them,
+-- which is the property under test; the runtime assertions stay as the guard
+-- against them creeping back into the encoded JSON.
+---@diagnostic disable-next-line: undefined-field
 assert(bundle.contexts[1].hash == nil)
+---@diagnostic disable-next-line: undefined-field
 assert(bundle.contexts[1].changed_since_added == nil)
 local envelope = draft.envelope(bundle)
 local decoded = vim.json.decode(envelope)

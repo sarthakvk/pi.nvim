@@ -8,16 +8,40 @@
 -- everything below re-enters through vim.schedule before touching state or
 -- calling a handler.
 
+---@class pi.Socket
+---@field descriptor pi.Descriptor
+---@field root string
+---@field handlers pi.SocketHandlers
+---@field pending table<string, fun(data: table?, err: string?)> In-flight requests by id.
+---@field pipe uv.uv_pipe_t
+---@field state pi.Descriptor? The peer's handshake reply; set once connected.
+---@field buffer string? Partial tail of the last read.
+---@field closed boolean?
 local M = {}
 M.__index = M
 
+---@param message table
+---@return string
 local function encode(message)
 	return vim.json.encode(message) .. "\n"
 end
 
+-- Connects and completes the handshake before calling back, so the caller never
+-- receives a transport that has not yet proven it speaks this protocol for this
+-- project.
+---@param descriptor pi.Descriptor
+---@param root string
+---@param handlers pi.SocketHandlers?
+---@param callback fun(transport: pi.Socket?, err: string?)
 function M.connect(descriptor, root, handlers, callback)
-	local self = setmetatable({ descriptor = descriptor, root = root, handlers = handlers or {}, pending = {} }, M)
-	self.pipe = vim.uv.new_pipe(false)
+	-- Cast rather than annotate: pipe, state, and buffer are filled in below.
+	local self = setmetatable({ descriptor = descriptor, root = root, handlers = handlers or {}, pending = {} }, M) --[[@as pi.Socket]]
+	-- new_pipe returns nil when the process is out of file descriptors.
+	local pipe = vim.uv.new_pipe(false)
+	if not pipe then
+		return callback(nil, "cannot connect to Pi bridge: cannot allocate a pipe")
+	end
+	self.pipe = pipe
 	self.pipe:connect(descriptor.socket_path, function(err)
 		vim.schedule(function()
 			if err then
@@ -70,6 +94,7 @@ function M.connect(descriptor, root, handlers, callback)
 	end)
 end
 
+---@param message table One decoded frame: a response, or an unsolicited event.
 function M:receive(message)
 	if message.type == "response" and message.id and self.pending[message.id] then
 		local callback = self.pending[message.id]
@@ -80,6 +105,8 @@ function M:receive(message)
 	end
 end
 
+---@param message table Gains an `id` field, which the reply is matched on.
+---@param callback fun(data: table?, err: string?)
 function M:request(message, callback)
 	if not self.pipe or self.closed then
 		return callback(nil, "Pi bridge is disconnected")
@@ -97,14 +124,20 @@ function M:request(message, callback)
 	end)
 end
 
+---@param message string
+---@param delivery "steer"|"followUp"|nil Required when Pi is busy; a plain send is refused.
+---@param callback fun(data: table?, err: string?)
 function M:send(message, delivery, callback)
 	self:request({ type = "send", message = message, delivery = delivery }, callback)
 end
 
+---@param id string? A single finding to drop, or nil to clear them all.
+---@param callback fun(data: table?, err: string?)
 function M:clear_findings(id, callback)
 	self:request({ type = "clear_findings", id_to_clear = id }, callback)
 end
 
+---@param reason string? Error reported to every in-flight request.
 function M:close(reason)
 	if self.closed then
 		return

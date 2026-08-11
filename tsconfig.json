@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    // Pi loads the extension's .ts sources directly through its own loader, so
+    // this project is only ever type-checked, never built.
+    "noEmit": true,
+
+    // Node 20 is the floor for Pi itself; ES2023 covers Array.prototype.at,
+    // which both files rely on to drop a trailing empty line.
+    "target": "es2023",
+    "lib": ["es2023"],
+
+    // Imports here are extensionless ("./protocol"), which Node's own ESM
+    // resolver would reject. Pi resolves them through a bundler-style loader,
+    // so type resolution has to model that rather than nodenext.
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+
+    "strict": true,
+    // Turns languages[extension] into string | undefined. The existing "?? text"
+    // fallback already handles it; this keeps the next such lookup honest.
+    "noUncheckedIndexedAccess": true,
+    // "import type" is already the convention in these files; this makes it an
+    // error to drop it, which matters when the loader erases types per-file.
+    "verbatimModuleSyntax": true,
+    // Keeps "key absent" distinct from "key present and undefined". These types
+    // are wire records, and JSON.stringify treats those two cases differently.
+    "exactOptionalPropertyTypes": true,
+
+    // Pi's published .d.ts files are outside this project's control.
+    "skipLibCheck": true
+  },
+  "include": ["pi-extension/**/*.ts"]
+}

@@ -1,0 +1,163 @@
+---@meta
+
+-- Type definitions for the records that cross module boundaries in pi.nvim, and
+-- for the JSON that crosses the wire to Pi. Definition-only: nothing requires
+-- this file at runtime, it exists so lua-language-server can check the shapes
+-- that are otherwise only implied by field access.
+--
+-- The records marked "wire" have a counterpart in pi-extension/protocol.ts. The
+-- two are maintained by hand and must be changed together; if they disagree, the
+-- bridge silently misreads fields rather than failing.
+
+---@class pi.Config
+---@field fallback "ask"|"headless"|"none" What to do when no opted-in Pi terminal session is found.
+---@field resume_headless boolean Reuse the project's saved session when starting a headless worker.
+---@field max_context_bytes integer Refusal threshold for an encoded context bundle.
+---@field pi_executable string
+---@field extension_path string Path to the companion extension Pi loads.
+---@field diagnostics vim.diagnostic.Opts Applied to this plugin's diagnostic namespace.
+
+-- wire: Finding in protocol.ts. Editor-only review annotations; nothing here is
+-- ever written back to a source file.
+---@class pi.Finding
+---@field id string
+---@field request_id string
+---@field context_item_id? string Draft item the finding answers, when it came from one.
+---@field path string Project-relative, POSIX separators.
+---@field start_line integer One-based, inclusive.
+---@field end_line integer One-based, inclusive.
+---@field severity "error"|"warning"|"information"|"hint"
+---@field title string
+---@field message string
+---@field expected_text string Exact source the finding was written against.
+---@field stale? boolean Set locally by pi.findings when the buffer no longer matches expected_text; never sent by Pi.
+
+-- Which Pi conversation a finding came from, so :PiReply can return to the one
+-- holding the surrounding reasoning.
+---@class pi.FindingOrigin
+---@field origin_session_id? string
+---@field origin_session_file? string
+
+-- What pi.findings actually keeps: the wire record with its origin merged in.
+---@class pi.StoredFinding : pi.Finding, pi.FindingOrigin
+
+-- wire: the descriptor JSON an opted-in Pi session publishes into the runtime
+-- directory. Written by descriptor() in index.ts.
+---@class pi.Descriptor
+---@field version integer
+---@field root string
+---@field session_id string
+---@field session_file string
+---@field display_name? string
+---@field pid integer
+---@field started_at integer
+---@field socket_path string
+---@field activity "idle"|"working"
+---@field capabilities string[]
+
+-- Reference to a Pi conversation, persisted per project so a headless worker can
+-- resume it instead of opening a fresh one.
+---@class pi.SavedSession
+---@field session_id string
+---@field session_file string
+
+-- Reply to the RPC get_state request. Pi's RPC protocol is camelCase, unlike the
+-- socket bridge's snake_case.
+---@class pi.RpcState
+---@field sessionId string
+---@field sessionFile string
+
+-- Per-root state owned by pi.session. The on_* fields are installed by pi.init
+-- and outlive any single transport, which is why they are read back on every
+-- callback rather than captured.
+---@class pi.SessionState
+---@field root string
+---@field mode? "interactive"|"headless"
+---@field activity "idle"|"working"|"stopping"|"stopped"
+---@field transport? pi.Rpc|pi.Socket
+---@field descriptor? pi.Descriptor Set in interactive mode only.
+---@field session_id? string
+---@field session_file? string
+---@field stopping? boolean
+---@field known_changes? table<string, boolean> Paths Pi reported editing, applied once it goes idle.
+---@field status? table<string, string> Status lines an extension set through Pi's UI protocol.
+---@field widgets? table<string, pi.Widget> Widgets an extension set through Pi's UI protocol.
+---@field on_known_changes? fun(paths: string[])
+---@field on_findings? fun(items: pi.Finding[], origin: pi.FindingOrigin)
+---@field on_findings_snapshot? fun(items: pi.Finding[], origin: pi.FindingOrigin)
+---@field on_status? fun(key: string, text: string)
+---@field on_widget? fun(key: string, lines: string[], placement: string?)
+---@field on_title? fun(title: string)
+---@field on_editor_text? fun(text: string)
+---@field on_settled? fun(worker: pi.Rpc)
+---@field on_exit? fun(code: integer, stderr: string)
+
+-- Held for a headless worker's extensions; pi.nvim records these but does not
+-- yet render them.
+---@class pi.Widget
+---@field lines string[]
+---@field placement string?
+
+-- Handlers pi.session installs on a headless worker. Every one is optional; the
+-- transport checks before calling.
+---@class pi.RpcHandlers
+---@field on_event? fun(event: table, worker: pi.Rpc)
+---@field on_findings? fun(items: pi.Finding[], origin: pi.FindingOrigin)
+---@field on_findings_snapshot? fun(items: pi.Finding[], origin: pi.FindingOrigin)
+---@field on_status? fun(key: string, text: string)
+---@field on_widget? fun(key: string, lines: string[], placement: string?)
+---@field on_title? fun(title: string)
+---@field on_editor_text? fun(text: string)
+---@field on_exit? fun(code: integer, signal: integer, stderr: string, worker: pi.Rpc)
+
+-- The socket bridge handles its own request/response pairing, so the only
+-- handler is for unsolicited events.
+---@class pi.SocketHandlers
+---@field on_event? fun(event: table)
+
+-- A range captured from a saved buffer by pi.context. Absolute `path` for
+-- re-reading, project-relative `relative_path` for anything Pi sees.
+---@class pi.Capture
+---@field root string
+---@field path string
+---@field relative_path string
+---@field start_line integer
+---@field end_line integer
+---@field text string
+---@field bufnr integer
+---@field kind? "whole_file" Set by pi.context.file; absent for a plain range.
+
+-- One entry in a project's context draft. Anchored with extmarks so the range
+-- follows edits, and re-read from disk at send time rather than trusting
+-- `snapshot`.
+---@class pi.DraftItem
+---@field id string
+---@field kind string
+---@field root string
+---@field path string
+---@field relative_path string
+---@field start_line integer
+---@field end_line integer
+---@field snapshot string Text as of the last capture; diagnostic only.
+---@field note string
+---@field bufnr integer
+---@field start_mark integer
+---@field end_mark integer
+
+-- wire: one element of `contexts` in the JSON envelope, read by
+-- parseContextEnvelope in protocol.ts.
+---@class pi.BundleContext
+---@field id string
+---@field kind string
+---@field path string Project-relative.
+---@field start_line integer
+---@field end_line integer
+---@field text string
+---@field note string
+
+-- wire: the whole envelope pi.draft sends as one user message.
+---@class pi.BundleRequest
+---@field id string
+---@field root string
+---@field note string
+---@field contexts pi.BundleContext[]

@@ -21,9 +21,13 @@
   "scripts": {
     "test": "nvim --headless -u NONE -l tests/lua/run.lua",
     "test:extension": "node --test tests/extension/*.test.mjs",
-    "test:e2e": "node tests/e2e/socket.mjs && tests/e2e/run-headless.sh"
+    "test:e2e": "node tests/e2e/socket.mjs && tests/e2e/run-headless.sh",
+    "typecheck": "npm run typecheck:ts && npm run typecheck:lua",
+    "typecheck:ts": "tsc --noEmit",
+    "typecheck:lua": "VIMRUNTIME=\"$(nvim --headless -u NONE --cmd 'lua io.write(vim.env.VIMRUNTIME)' --cmd q)\" lua-language-server --check . --configpath .luarc.json --checklevel Warning"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "typescript": "^7.0.2"
   }
 }

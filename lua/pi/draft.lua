@@ -6,23 +6,34 @@
 
 local context = require("pi.context")
 
+---@class pi.draft
+---@field drafts table<string, pi.DraftItem[]> Keyed by project root.
+---@field namespace integer Extmark namespace anchoring each item's range.
 local M = { drafts = {}, namespace = vim.api.nvim_create_namespace("pi.nvim.draft") }
 
 -- Neovim has no UUID primitive; hashing the clock, the RNG, and the process id
 -- is enough for ids that only have to be unique across one editor's drafts.
+---@return string
 local function new_id()
 	return vim.fn.sha256(("%s:%s:%s"):format(vim.loop.hrtime(), math.random(), vim.loop.os_getpid())):sub(1, 32)
 end
 
+---@param root string
+---@return pi.DraftItem[]
 local function items_for_root(root)
 	M.drafts[root] = M.drafts[root] or {}
 	return M.drafts[root]
 end
 
+---@param root string
+---@return pi.DraftItem[] items The live list, in send order.
 function M.items(root)
 	return items_for_root(root)
 end
 
+---@param captured pi.Capture
+---@param note string?
+---@return pi.DraftItem
 function M.add(captured, note)
 	local items = items_for_root(captured.root)
 	local start_mark = vim.api.nvim_buf_set_extmark(captured.bufnr, M.namespace, captured.start_line - 1, 0, {})
@@ -45,6 +56,10 @@ function M.add(captured, note)
 	return item
 end
 
+-- Drops an item and its extmarks.
+---@param root string
+---@param index integer One-based position in the draft.
+---@return pi.DraftItem? removed Nil when `index` is out of range.
 function M.remove(root, index)
 	local item = items_for_root(root)[index]
 	if not item then
@@ -58,12 +73,17 @@ function M.remove(root, index)
 	return item
 end
 
+---@param root string
 function M.clear(root)
 	for index = #items_for_root(root), 1, -1 do
 		M.remove(root, index)
 	end
 end
 
+---@param root string
+---@param from integer One-based.
+---@param to integer One-based.
+---@return boolean moved False when either position is out of range.
 function M.move(root, from, to)
 	local items = items_for_root(root)
 	if not items[from] or to < 1 or to > #items then
@@ -74,16 +94,22 @@ function M.move(root, from, to)
 	return true
 end
 
+-- Declared ahead of M.refresh, which calls it.
+---@type fun(item: pi.DraftItem): integer?, integer?, string?
 local resolve_live_range
 
+-- Re-reads one item from where its extmarks now sit.
+---@param root string
+---@param index integer One-based.
+---@return pi.DraftItem? item, string? err
 function M.refresh(root, index)
 	local item = items_for_root(root)[index]
 	if not item then
 		return nil, "no such draft item"
 	end
-	local first_line, last_line = resolve_live_range(item)
-	if not first_line then
-		return nil, last_line
+	local first_line, last_line, reason = resolve_live_range(item)
+	if not first_line or not last_line then
+		return nil, reason
 	end
 	local captured, err = context.range(item.bufnr, first_line, last_line)
 	if not captured then
@@ -97,36 +123,46 @@ end
 -- Returns where the item's extmarks currently sit, or nil plus a reason the item
 -- can no longer be trusted. Callers surface that reason to the user rather than
 -- falling back to the snapshot taken when the item was added.
+---@param item pi.DraftItem
+---@return integer? start_line One-based; nil when the item cannot be trusted.
+---@return integer? end_line One-based, inclusive.
+---@return string? reason Set only when the range could not be resolved.
 resolve_live_range = function(item)
 	if not vim.api.nvim_buf_is_valid(item.bufnr) then
-		return nil, "source buffer is no longer available"
+		return nil, nil, "source buffer is no longer available"
 	end
 	local ok, reason = context.buffer_is_saved(item.bufnr)
 	if not ok then
-		return nil, reason
+		return nil, nil, reason
 	end
 	local start_position = vim.api.nvim_buf_get_extmark_by_id(item.bufnr, M.namespace, item.start_mark, {})
 	local end_position = vim.api.nvim_buf_get_extmark_by_id(item.bufnr, M.namespace, item.end_mark, {})
 	if #start_position == 0 or #end_position == 0 then
-		return nil, "source range can no longer be resolved"
+		return nil, nil, "source range can no longer be resolved"
 	end
 	-- Extmark rows are zero-based while draft items are one-based. The ordering
 	-- check below is a defensive guard, not a state the marks are known to reach.
 	local start_line, end_line = start_position[1] + 1, end_position[1] + 1
 	if start_line > end_line then
-		return nil, "source range can no longer be resolved"
+		return nil, nil, "source range can no longer be resolved"
 	end
 	return start_line, end_line
 end
 
+-- Collects the whole draft into the single request sent to Pi, re-reading every
+-- excerpt from disk so nothing that has drifted is sent.
+---@param root string
+---@param overall_note string?
+---@param maximum_bytes integer Encoded-size ceiling; an oversized bundle is refused, not truncated.
+---@return pi.BundleRequest? request, string? err
 function M.bundle(root, overall_note, maximum_bytes)
 	local contexts = {}
 	-- Every excerpt is re-read from disk here rather than taken from item.snapshot,
 	-- so the current saved source is sent accurately.
 	for _, item in ipairs(items_for_root(root)) do
-		local first_line, last_line = resolve_live_range(item)
-		if not first_line then
-			return nil, last_line
+		local first_line, last_line, reason = resolve_live_range(item)
+		if not first_line or not last_line then
+			return nil, reason
 		end
 		local text, err = context.read_range(item.path, first_line, last_line)
 		if not text then
@@ -157,6 +193,8 @@ end
 
 -- The transport accepts a user message as text, so keep the complete request
 -- structured as JSON without adding a textual envelope.
+---@param request pi.BundleRequest
+---@return string json Read by formatContextEnvelope in pi-extension/protocol.ts.
 function M.envelope(request)
 	local payload = {
 		id = request.id,
