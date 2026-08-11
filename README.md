@@ -82,9 +82,11 @@ diagnostic:
 - `typecheck:ts` runs `tsc --noEmit` over `pi-extension/` using `tsconfig.json`
   (`strict`, plus `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`).
 - `typecheck:lua` runs `lua-language-server --check` over the repository using
-  `.luarc.json`. It needs `nvim` on `PATH` to locate the Neovim runtime
-  definitions, and finds the server on `PATH`, in a Mason install, or wherever
-  `LUA_LS` points.
+  `.luarc.json`, and needs both `lua-language-server` and `nvim` on `PATH`.
+  `workspace.library` points at `$VIMRUNTIME/lua`, where the `vim.*` and `uv.*`
+  definitions live; the editor's server inherits that variable from Neovim, so
+  the script sets it from `nvim` rather than writing an install-specific path
+  into `.luarc.json`.
 
 ## Development
 
