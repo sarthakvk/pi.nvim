@@ -21,9 +21,13 @@
   "scripts": {
     "test": "nvim --headless -u NONE -l tests/lua/run.lua",
     "test:extension": "node --test tests/extension/*.test.mjs",
-    "test:e2e": "node tests/e2e/socket.mjs && tests/e2e/run-headless.sh"
+    "test:e2e": "node tests/e2e/socket.mjs && tests/e2e/run-headless.sh",
+    "typecheck": "npm run typecheck:ts && npm run typecheck:lua",
+    "typecheck:ts": "tsc --noEmit",
+    "typecheck:lua": "scripts/typecheck-lua.sh"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "typescript": "^7.0.2"
   }
 }

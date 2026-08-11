@@ -123,10 +123,11 @@ export function validateFinding(root: string, value: unknown): Finding {
     id:
       typeof input.id === "string" && input.id !== "" ? input.id : identifier(),
     request_id: input.request_id as string,
-    context_item_id:
-      typeof input.context_item_id === "string"
-        ? input.context_item_id
-        : undefined,
+    // Spread rather than assigning undefined, so an absent id stays absent in
+    // the JSON that crosses to Neovim instead of becoming an explicit null.
+    ...(typeof input.context_item_id === "string" && {
+      context_item_id: input.context_item_id,
+    }),
     path,
     start_line: input.start_line as number,
     end_line: input.end_line as number,

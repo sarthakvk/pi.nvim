@@ -6,18 +6,32 @@
 
 local M = {}
 
+---@param message string
+---@param level integer? A vim.log.levels value; defaults to INFO.
 function M.notify(message, level)
 	vim.notify(message, level or vim.log.levels.INFO, { title = "pi.nvim" })
 end
 
+---@param prompt string
+---@param callback fun(value: string?) Receives nil when the user cancels.
+---@param default string?
 function M.input(prompt, callback, default)
 	vim.ui.input({ prompt = prompt, default = default }, callback)
 end
 
+---@generic T
+---@param items T[]
+---@param prompt string
+---@param format fun(item: T): string
+---@param callback fun(choice: T?) Receives nil when the user cancels.
 function M.select(items, prompt, format, callback)
 	vim.ui.select(items, { prompt = prompt, format_item = format }, callback)
 end
 
+-- Opens throwaway, unmodifiable scratch output in a split.
+---@param name string Buffer name; must be unique.
+---@param text string?
+---@return integer bufnr
 function M.open_text(name, text)
 	local bufnr = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_name(bufnr, name)
@@ -34,6 +48,9 @@ end
 -- Buffer-backed prompt for Pi's `editor` UI request, which asks for text too
 -- long for a one-line vim.ui.input. The callback receives nil on cancel so the
 -- caller can tell an empty answer apart from a refused one.
+---@param title string
+---@param prefill string
+---@param callback fun(value: string?) Receives nil when the user cancels.
 function M.editor(title, prefill, callback)
 	local bufnr = vim.api.nvim_create_buf(false, true)
 	-- Buffer names must be unique; a short digest of the clock keeps concurrent
@@ -72,6 +89,8 @@ end
 
 -- Shows text Pi wants staged in the editor. Unlike M.editor this is one-way:
 -- there is no callback, so the user keeps or discards the buffer themselves.
+---@param text string?
+---@return integer bufnr
 function M.open_editor_prefill(text)
 	local bufnr = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_name(bufnr, "pi://prefill/" .. vim.fn.sha256(tostring(vim.loop.hrtime())):sub(1, 8))
@@ -84,6 +103,9 @@ end
 
 -- The two header lines are load-bearing: pi.init derives the draft index from
 -- the cursor line, so item N must stay on line N + 2.
+---@param root string
+---@param items pi.DraftItem[]
+---@return integer bufnr
 function M.open_draft(root, items)
 	local lines = { "Pi context draft — use :PiContextRemove, :PiContextRefresh, or :PiContextClear", "" }
 	for index, item in ipairs(items) do
@@ -105,6 +127,9 @@ function M.open_draft(root, items)
 	return bufnr
 end
 
+---@param root string
+---@param findings pi.StoredFinding[]
+---@return integer bufnr
 function M.open_findings(root, findings)
 	local lines, ids_by_line = { "Pi findings", "" }, {}
 	for _, finding in ipairs(findings) do

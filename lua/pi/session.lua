@@ -13,8 +13,11 @@ local socket = require("pi.transport.socket")
 local rpc = require("pi.transport.rpc")
 local ui = require("pi.ui")
 
+---@class pi.session
+---@field state table<string, pi.SessionState> Per project root; outlives any single transport.
 local M = { state = {} }
 
+---@return string
 local function runtime_dir()
 	local base = vim.env.XDG_RUNTIME_DIR
 	if not base or base == "" then
@@ -27,12 +30,18 @@ local function runtime_dir()
 	return directory
 end
 
+---@param path string
+---@return table? value Nil when the file is absent or not valid JSON.
 local function read_json(path)
 	local lines = vim.fn.readfile(path)
 	local ok, value = pcall(vim.json.decode, table.concat(lines, "\n"))
 	return ok and value or nil
 end
 
+-- Every opted-in Pi session for this project, garbage collecting descriptors
+-- whose process or socket is gone.
+---@param root string
+---@return pi.Descriptor[]
 function M.discover(root)
 	local descriptors = {}
 	for _, path in ipairs(vim.fn.globpath(runtime_dir(), "*.json", false, true)) do
@@ -56,15 +65,24 @@ function M.discover(root)
 	return descriptors
 end
 
+---@param root string
+---@return pi.SessionState
 local function state_for(root)
 	M.state[root] = M.state[root] or { root = root, mode = nil, activity = "idle" }
 	return M.state[root]
 end
 
+---@param root string
+---@return pi.SessionState state Created on first use; the caller installs its on_* handlers.
 function M.get(root)
 	return state_for(root)
 end
 
+-- Connects to an opted-in terminal session, replacing whatever was attached for
+-- this root.
+---@param root string
+---@param descriptor pi.Descriptor
+---@param callback fun(state: pi.SessionState?, err: string?)
 function M.attach(root, descriptor, callback)
 	socket.connect(descriptor, root, {
 		on_event = function(event)
@@ -111,6 +129,9 @@ end
 
 -- Reattaches to the specific session that produced a finding, so a reply lands
 -- in the conversation that has the surrounding reasoning.
+---@param root string
+---@param session_id string
+---@param callback fun(state: pi.SessionState?, err: string?)
 function M.attach_origin(root, session_id, callback)
 	for _, descriptor in ipairs(M.discover(root)) do
 		if descriptor.session_id == session_id then
@@ -120,6 +141,9 @@ function M.attach_origin(root, session_id, callback)
 	callback(nil, "the Pi session that created this finding is not attached")
 end
 
+-- Attaches the only opted-in session, or prompts when there is more than one.
+---@param root string
+---@param callback fun(state: pi.SessionState?, err: string?)
 function M.choose_and_attach(root, callback)
 	local descriptors = M.discover(root)
 	if #descriptors == 0 then
@@ -139,6 +163,8 @@ function M.choose_and_attach(root, callback)
 	end)
 end
 
+---@param root string
+---@return pi.SavedSession? record
 local function saved_session(root)
 	local file = project.state_file(root)
 	if vim.fn.filereadable(file) == 0 then
@@ -147,10 +173,18 @@ local function saved_session(root)
 	return read_json(file)
 end
 
+---@param root string
+---@param record pi.SavedSession
 local function save_session(root, record)
 	vim.fn.writefile({ vim.json.encode(record) }, project.state_file(root), "b")
 end
 
+-- Starts a headless worker for this root, or returns the running one. The
+-- handlers installed here only forward to whatever pi.init put on the state
+-- table, which is why each re-reads it rather than capturing it.
+---@param root string
+---@param config pi.Config
+---@param callback fun(state: pi.SessionState?, err: string?)
 function M.start_headless(root, config, callback)
 	local current = state_for(root)
 	if current.mode == "headless" and current.transport and not current.transport.closed then
@@ -241,6 +275,8 @@ end
 
 -- Returns the stopped worker's session reference so the caller can tell the user
 -- how to resume it; the worker exits asynchronously via on_exit.
+---@param root string
+---@return pi.SavedSession? stopped, string? err
 function M.stop(root)
 	local current = state_for(root)
 	if current.mode ~= "headless" or not current.transport then

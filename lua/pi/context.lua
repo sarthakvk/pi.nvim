@@ -7,6 +7,8 @@ local project = require("pi.project")
 
 local M = {}
 
+---@param path string
+---@return string? text, string? err
 local function read_file(path)
 	local file, err = io.open(path, "rb")
 	if not file then
@@ -17,6 +19,8 @@ local function read_file(path)
 	return text
 end
 
+---@param text string
+---@return string[]
 local function split_lines(text)
 	local lines = vim.split(text, "\n", { plain = true })
 	-- A trailing newline splits into a phantom empty last line; dropping it keeps
@@ -30,6 +34,9 @@ end
 -- Returns true plus the file's path, or false plus the reason the buffer cannot
 -- be captured. A buffer only qualifies while what is on disk is byte-identical
 -- to what the user is looking at.
+---@param bufnr integer
+---@return boolean saved
+---@return string path_or_reason The file's path when saved, otherwise why not.
 function M.buffer_is_saved(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return false, "buffer is no longer valid"
@@ -58,6 +65,11 @@ function M.buffer_is_saved(bufnr)
 	return true, path
 end
 
+-- Captures a line range from a saved buffer, reading the text from disk.
+---@param bufnr integer
+---@param first_line integer? One-based, inclusive; defaults to the first line.
+---@param last_line integer? One-based, inclusive; defaults to the last line.
+---@return pi.Capture? captured, string? err
 function M.range(bufnr, first_line, last_line)
 	local ok, path_or_reason = M.buffer_is_saved(bufnr)
 	if not ok then
@@ -89,6 +101,8 @@ function M.range(bufnr, first_line, last_line)
 	}
 end
 
+---@param bufnr integer
+---@return pi.Capture? captured, string? err
 function M.file(bufnr)
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 	local captured, err = M.range(bufnr, 1, line_count)
@@ -100,6 +114,10 @@ end
 
 -- Re-reads a range straight from disk, for callers holding an excerpt that may
 -- have drifted. Returns the text, or nil plus a reason.
+---@param path string Absolute path.
+---@param first_line integer One-based, inclusive.
+---@param last_line integer One-based, inclusive.
+---@return string? text, string? err
 function M.read_range(path, first_line, last_line)
 	local disk_text, err = read_file(path)
 	if not disk_text then

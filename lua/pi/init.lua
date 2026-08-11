@@ -14,6 +14,8 @@ local session = require("pi.session")
 local findings = require("pi.findings")
 local ui = require("pi.ui")
 
+---@class pi
+---@field config pi.Config
 local M = {}
 -- The companion extension ships inside this repository, so its default path is
 -- derived from this file's location rather than asked of the user.
@@ -29,6 +31,7 @@ M.config = {
 	diagnostics = { signs = true, underline = true, virtual_text = false },
 }
 
+---@return string
 local function current_root()
 	-- Draft and findings listings are scratch buffers with no real path, so they
 	-- carry the root they were opened for; fall back to the file or the cwd.
@@ -43,6 +46,8 @@ end
 -- Pi edits the working tree directly, so buffers can go out of date. Reloading
 -- is limited to buffers with nothing to lose; anything modified is only
 -- reported, because the user's unsaved work outranks Pi's edit.
+---@param root string
+---@param changed_paths string[] Project-relative or absolute.
 local function report_known_changes(root, changed_paths)
 	if #changed_paths == 0 then
 		return
@@ -62,10 +67,13 @@ end
 -- Installs this module's reactions onto the session state for `root`. Called
 -- before every attach or start, since pi.session keeps the handlers on state
 -- that outlives any single transport.
+---@param root string
 local function install_session_handlers(root)
 	local current_session = session.get(root)
 	-- Findings are tagged with the session that produced them so :PiReply can go
 	-- back to the conversation holding the surrounding reasoning.
+	---@param metadata pi.FindingOrigin?
+	---@return pi.FindingOrigin
 	local function origin_or_current(metadata)
 		return metadata
 			or { origin_session_id = current_session.session_id, origin_session_file = current_session.session_file }
@@ -111,6 +119,8 @@ end
 -- terminal session always wins; only when none exists does `fallback` decide
 -- whether to start headless Pi, ask first, or refuse. Nothing here runs without
 -- a user-initiated send, which is why Pi never starts at Neovim startup.
+---@param root string
+---@param callback fun(target: pi.SessionState?, err: string?)
 local function ensure_target(root, callback)
 	install_session_handlers(root)
 	local current_session = session.get(root)
@@ -142,6 +152,11 @@ local function ensure_target(root, callback)
 	end)
 end
 
+-- Sends a bundle to whichever Pi ensure_target resolves, asking how to deliver
+-- it when Pi is mid-turn.
+---@param root string
+---@param request pi.BundleRequest
+---@param on_sent fun() Runs only once Pi has accepted the bundle.
 local function deliver(root, request, on_sent)
 	ensure_target(root, function(target, err)
 		if not target then
@@ -173,6 +188,8 @@ local function deliver(root, request, on_sent)
 end
 
 -- With a command range, capture exactly it; otherwise the whole file.
+---@param opts vim.api.keyset.create_user_command.command_args?
+---@return pi.Capture? captured, string? err
 local function capture(opts)
 	local bufnr = vim.api.nvim_get_current_buf()
 	if opts and opts.range and opts.range > 0 then
@@ -181,6 +198,8 @@ local function capture(opts)
 	return context.file(bufnr)
 end
 
+-- :PiContextAdd — capture the range or file and append it to the draft.
+---@param opts vim.api.keyset.create_user_command.command_args
 function M.context_add(opts)
 	local note = opts.args ~= "" and opts.args or nil
 	local function add_with_note(note_text)
@@ -198,6 +217,7 @@ function M.context_add(opts)
 	end
 end
 
+-- :PiContextShow
 function M.context_show()
 	local root = current_root()
 	ui.open_draft(root, draft.items(root))
@@ -205,11 +225,13 @@ end
 
 -- The draft listing is edited by putting the cursor on an item, so the item's
 -- index is the cursor line minus the two header lines ui.open_draft writes.
+---@return integer? index One-based, or nil when the cursor is on a header line.
 local function draft_index()
 	local line = vim.api.nvim_win_get_cursor(0)[1] - 2
 	return line > 0 and line or nil
 end
 
+-- :PiContextRemove — acts on the draft item under the cursor.
 function M.context_remove()
 	local root, index = current_root(), draft_index()
 	if not index or not draft.remove(root, index) then
@@ -218,6 +240,7 @@ function M.context_remove()
 	ui.notify("Removed Pi context item")
 end
 
+-- :PiContextRefresh — re-reads the item under the cursor from disk.
 function M.context_refresh()
 	local root, index = current_root(), draft_index()
 	if not index then
@@ -231,11 +254,14 @@ function M.context_refresh()
 	end
 end
 
+-- :PiContextClear
 function M.context_clear()
 	draft.clear(current_root())
 	ui.notify("Cleared Pi context draft")
 end
 
+-- :PiContextMove — moves the item under the cursor to the given position.
+---@param opts vim.api.keyset.create_user_command.command_args
 function M.context_move(opts)
 	local root, from = current_root(), draft_index()
 	local to = tonumber(opts.args)
@@ -246,6 +272,7 @@ function M.context_move(opts)
 	M.context_show()
 end
 
+-- :PiContextSend — bundles the whole draft and sends it, clearing it on success.
 function M.context_send()
 	local root = current_root()
 	ui.input("Instruction for Pi: ", function(note)
@@ -266,6 +293,7 @@ end
 
 -- :PiSend — a one-shot bundle built from the current file or range that never
 -- touches the draft, for when collecting context first would be ceremony.
+---@param opts vim.api.keyset.create_user_command.command_args
 function M.send_current(opts)
 	ui.input("Instruction for Pi: ", function(note)
 		if note == nil then
@@ -297,6 +325,7 @@ function M.send_current(opts)
 	end)
 end
 
+-- :PiAttach
 function M.attach()
 	local root = current_root()
 	install_session_handlers(root)
@@ -309,6 +338,7 @@ function M.attach()
 	end)
 end
 
+-- :PiSessions — lists what this project could talk to. Display only.
 function M.sessions()
 	local root, current_session = current_root(), session.get(current_root())
 	local choices = session.discover(root)
@@ -327,12 +357,15 @@ function M.sessions()
 	end, function() end)
 end
 
+-- :PiFindings
 function M.findings()
 	local root = current_root()
 	findings.revalidate(root)
 	ui.open_findings(root, findings.list(root))
 end
 
+-- :PiReply — replies to the finding under the cursor, in the conversation that
+-- raised it.
 function M.reply()
 	local root, finding = current_root(), findings.at_cursor(current_root())
 	if not finding then
@@ -417,6 +450,7 @@ function M.clear()
 end
 
 -- Headless Pi has no terminal of its own, so its last reply is only visible here.
+-- :PiResponse
 function M.response()
 	local current_session = session.get(current_root())
 	if not current_session.transport or current_session.mode ~= "headless" then
@@ -425,6 +459,7 @@ function M.response()
 	ui.open_text("pi://response", current_session.transport.latest_response or "No completed assistant response yet.")
 end
 
+-- :PiStatus
 function M.status()
 	local current_session = session.get(current_root())
 	ui.notify(
@@ -436,10 +471,13 @@ function M.status()
 	)
 end
 
+-- :PiStop — asks the headless worker to exit; it goes away asynchronously.
 function M.stop()
 	local stopped, err = session.stop(current_root())
 	if not stopped then
-		return ui.notify(err, vim.log.levels.WARN)
+		-- session.stop always pairs a nil result with a reason; the fallback only
+		-- exists because that pairing is not expressible in the annotation.
+		return ui.notify(err or "cannot stop Pi", vim.log.levels.WARN)
 	end
 	-- The session reference is the only way back into this conversation once the
 	-- worker is gone, so hand the user the exact command to resume it.
@@ -451,6 +489,8 @@ function M.stop()
 	)
 end
 
+-- Merges user options over the defaults and installs the plugin's autocommands.
+---@param options table? Partial pi.Config.
 function M.setup(options)
 	M.config = vim.tbl_deep_extend("force", M.config, options or {})
 	vim.diagnostic.config(M.config.diagnostics, findings.namespace)

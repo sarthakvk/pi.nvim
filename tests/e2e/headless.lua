@@ -31,7 +31,8 @@ end
 local function wait_for(predicate, message)
 	assert(
 		vim.wait(120000, function()
-			return predicate() or failure
+			-- vim.wait's predicate must return a boolean, and `failure` is a message.
+			return predicate() or failure ~= nil
 		end, 50),
 		failure or message
 	)

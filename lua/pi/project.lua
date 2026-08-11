@@ -6,12 +6,18 @@
 
 local M = {}
 
+---@param path string
+---@return string
 local function realpath(path)
 	-- fs_realpath fails for paths that do not exist yet, so fall back to plain
 	-- absolute expansion rather than losing the path entirely.
 	return vim.uv.fs_realpath(path) or vim.fn.fnamemodify(path, ":p")
 end
 
+-- The Git worktree top level, or the containing directory outside a worktree.
+-- Must agree with canonicalRoot in pi-extension/protocol.ts.
+---@param path string? Defaults to the working directory.
+---@return string root Absolute, symlinks resolved.
 function M.root(path)
 	path = realpath(path or vim.fn.getcwd())
 	local directory = vim.fn.isdirectory(path) == 1 and path or vim.fn.fnamemodify(path, ":h")
@@ -24,6 +30,9 @@ function M.root(path)
 	return realpath(directory)
 end
 
+---@param root string
+---@param path string
+---@return string? relative Nil when `path` is outside `root`; "." for the root itself.
 function M.relative(root, path)
 	path = realpath(path)
 	if path == root then
@@ -36,10 +45,16 @@ function M.relative(root, path)
 	return path:sub(#prefix + 1)
 end
 
+---@param root string
+---@param path string
+---@return boolean
 function M.contains(root, path)
 	return M.relative(root, path) ~= nil
 end
 
+-- Where this project's saved session reference lives. Creates the directory.
+---@param root string
+---@return string
 function M.state_file(root)
 	-- Roots are absolute paths and cannot be used as file names, so key the state
 	-- file by a digest of the root instead.
