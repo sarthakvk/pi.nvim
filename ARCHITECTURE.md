@@ -45,7 +45,7 @@ pi-extension/protocol.ts shared wire version, Finding type, path validation
 
 | | interactive | headless |
 |---|---|---|
-| Process | user's Pi terminal, opted in via `/nvim-bridge enable` | `pi --mode rpc` spawned by the plugin |
+| Process | user's Pi terminal, opted in via `/nvim-bridge` | `pi --mode rpc` spawned by the plugin |
 | Transport | `transport/socket.lua` ↔ unix socket in `$XDG_RUNTIME_DIR/pi.nvim` | `transport/rpc.lua` ↔ stdio NDJSON |
 | Discovery | descriptor JSON files, matched on `root` | none; started on demand |
 | Lifetime | user's; left running | plugin's; killed on `VimLeavePre` |
@@ -199,10 +199,11 @@ editor-only; nothing here writes source.
 `index.ts` default-exports the extension entry point; a symbol guard makes a
 double load a no-op.
 
-- `/nvim-bridge enable|disable|clear [id]` (`pi.registerCommand`) — `enable` is the
-  **opt-in**: it binds a unix socket and writes a 0600 descriptor into the 0700
-  runtime directory. Without it a Pi process is invisible to Neovim, even in the
-  same project. `clear` also serves headless Pi, which has no socket.
+- `/nvim-bridge [enable|disable|clear [id]]` (`pi.registerCommand`) — no arguments
+  toggle the **opt-in** bridge; `enable` binds a unix socket and writes a 0600
+  descriptor into the 0700 runtime directory, while `disable` removes them.
+  Without enable, a Pi process is invisible to Neovim, even in the same project.
+  `clear` also serves headless Pi, which has no socket.
 - `nvim_publish_findings` tool (`pi.registerTool`) — Pi's only way to return
   annotations. The whole batch is validated before any of it is published, and each
   finding's `expected_text` must match disk.

@@ -1,7 +1,7 @@
 // End-to-end check of the opt-in bridge socket, from the Neovim side's point of
 // view but without Neovim: it starts a real interactive Pi in a throwaway Git
-// project, opts in with /nvim-bridge enable, then finds the descriptor and
-// completes the handshake exactly as lua/pi/transport/socket.lua would.
+// project, opts in with /nvim-bridge, then finds the descriptor and completes the
+// handshake exactly as lua/pi/transport/socket.lua would.
 //
 // This covers what the Lua tests cannot: that the descriptor really appears in
 // the runtime directory, and that the socket answers a hello for the right root
@@ -9,7 +9,13 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +29,7 @@ const extension = new URL("../../pi-extension/index.ts", import.meta.url)
 // would leave it in non-interactive mode and no slash command would run.
 const child = spawn(
   "script",
-  ["-qfec", `pi --extension ${JSON.stringify(extension)}`, "/dev/null"],
+  ["-qfec", `pi -ne --extension ${JSON.stringify(extension)}`, "/dev/null"],
   {
     cwd: project,
     stdio: ["pipe", "pipe", "pipe"],
@@ -64,7 +70,7 @@ function waitFor(predicate, message) {
 
 try {
   await waitFor(piStarted, "interactive Pi did not start");
-  child.stdin.write("/nvim-bridge enable\r");
+  child.stdin.write("/nvim-bridge\r");
   // Resolved the same way the extension does, so the test looks where a real
   // session would actually have published itself.
   const stateHome =
@@ -134,6 +140,16 @@ try {
     "bridge dropped a message that arrived without a trailing newline",
   );
   halfOpen.destroy();
+
+  // With no argument the command toggles the bridge back off.
+  child.stdin.write("/nvim-bridge\r");
+  await waitFor(
+    () =>
+      !existsSync(join(runtime, descriptor.name)) &&
+      !existsSync(descriptor.value.socket_path),
+    "bridge descriptor was not removed by the toggle",
+  );
+
   // Killing Pi below skips its shutdown hook, so clean up what it published.
   rmSync(join(runtime, descriptor.name), { force: true });
   rmSync(descriptor.value.socket_path, { force: true });

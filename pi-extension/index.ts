@@ -1,7 +1,7 @@
 // The Pi half of the bridge: a Pi extension that lets one Pi session be driven
 // from Neovim and gives Pi a way to send review findings back.
 //
-// It contributes three things. `/nvim-bridge enable` opens a unix socket in the
+// It contributes three things. `/nvim-bridge` toggles a unix socket in the
 // user's private runtime directory and advertises it with a descriptor file —
 // this is the opt-in, and without it a Pi process is invisible to Neovim even
 // when it shares the project. The socket then serves Neovim's requests (send a
@@ -335,6 +335,11 @@ function enable(runtime: Runtime): string {
   return `Pi bridge is enabling for ${runtime.root}`;
 }
 
+function disable(runtime: Runtime): string {
+  closeServer(runtime);
+  return "Pi bridge disabled";
+}
+
 export default function (pi: ExtensionAPI): void {
   const guarded = pi as unknown as Record<symbol, boolean>;
   if (guarded[GUARD]) return;
@@ -415,18 +420,21 @@ export default function (pi: ExtensionAPI): void {
 
   pi.registerCommand("nvim-bridge", {
     description:
-      "Enable or disable the local Neovim bridge; use /nvim-bridge enable",
+      "Toggle the local Neovim bridge, or use enable, disable, or clear [finding-id]",
     handler: async (args, ctx) => {
       if (!runtime) return;
-      if (args.trim() === "enable") ctx.ui.notify(enable(runtime), "info");
-      else if (args.trim() === "disable") {
-        closeServer(runtime);
-        ctx.ui.notify("Pi bridge disabled", "info");
-      }
+      const command = args.trim();
+      if (command === "enable") ctx.ui.notify(enable(runtime), "info");
+      else if (command === "disable") ctx.ui.notify(disable(runtime), "info");
+      else if (command === "")
+        ctx.ui.notify(
+          runtime.server ? disable(runtime) : enable(runtime),
+          "info",
+        );
       // Also reachable from headless Pi, which has no bridge socket to carry a
       // clear_findings request and can only be driven by slash commands.
-      else if (args.trim().startsWith("clear")) {
-        const id = args.trim().split(/\s+/, 2)[1];
+      else if (command.startsWith("clear")) {
+        const id = command.split(/\s+/, 2)[1];
         if (id) runtime.findings.delete(id);
         else runtime.findings.clear();
         appendEntry(FINDINGS_CLEAR_TYPE, { id });
@@ -434,7 +442,7 @@ export default function (pi: ExtensionAPI): void {
         ctx.ui.notify("Pi findings cleared", "info");
       } else
         ctx.ui.notify(
-          "Usage: /nvim-bridge enable|disable|clear [finding-id]",
+          "Usage: /nvim-bridge [enable|disable|clear [finding-id]]",
           "info",
         );
     },
