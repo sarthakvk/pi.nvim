@@ -13,6 +13,7 @@ local draft = require("pi.draft")
 local session = require("pi.session")
 local findings = require("pi.findings")
 local ui = require("pi.ui")
+local keymaps = require("pi.keymaps")
 
 ---@class pi
 ---@field config pi.Config
@@ -29,6 +30,8 @@ M.config = {
 	pi_executable = "pi",
 	extension_path = plugin_root .. "/pi-extension/index.ts",
 	diagnostics = { signs = true, underline = true, virtual_text = false },
+	keymaps = keymaps.defaults,
+	which_key = keymaps.which_key_defaults,
 }
 
 ---@return string
@@ -529,6 +532,7 @@ function M.setup(options)
 	M.config = vim.tbl_deep_extend("force", M.config, options or {})
 	vim.diagnostic.config(M.config.diagnostics, findings.namespace)
 	local group = vim.api.nvim_create_augroup("pi.nvim", { clear = true })
+	keymaps.setup(M.config.keymaps, M.config.which_key, group)
 	-- Findings anchor to exact text, so any edit or buffer switch is a chance for
 	-- one to become stale; re-checking here keeps the [stale] marker honest.
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufEnter", "BufWritePost" }, {

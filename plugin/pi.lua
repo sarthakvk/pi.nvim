@@ -1,7 +1,7 @@
 -- Command surface for pi.nvim, and the only thing the plugin does at startup.
 -- Each command requires the module lazily so that merely having the plugin
--- installed costs nothing until a :Pi* command is actually run; no mappings,
--- autocommands, or windows are created here.
+-- installed costs nothing until a :Pi* command is actually run; mappings and
+-- autocommands are created only when the user calls setup().
 
 if vim.g.loaded_pi_nvim then
 	return

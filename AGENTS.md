@@ -32,6 +32,7 @@ lua/pi/init.lua              public API and command flow
 lua/pi/context.lua           saved-file and range capture
 lua/pi/draft.lua             context drafts and request bundles
 lua/pi/session.lua           target selection and session lifecycle
+lua/pi/keymaps.lua           configurable mappings and optional WhichKey metadata
 lua/pi/transport/socket.lua  interactive-session transport
 lua/pi/transport/rpc.lua     headless-worker transport
 lua/pi/findings.lua          finding storage and diagnostics

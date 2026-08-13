@@ -20,7 +20,7 @@ as a project-scoped headless worker managed by Neovim.
 - Starts and resumes a headless Pi session when no terminal session is available
 - Renders Pi review findings with Neovim diagnostics, without changing source
 - Refuses unsaved or externally changed buffers instead of sending stale code
-- Adds no default mappings or permanent UI
+- Includes configurable `<leader>p` mappings and adds no permanent UI
 
 ## Requirements
 
@@ -45,9 +45,7 @@ Then install the Neovim plugin with your plugin manager.
 ```lua
 {
   "sarthakvk/pi.nvim",
-  config = function()
-    require("pi").setup()
-  end,
+  opts = {},
 }
 ```
 
@@ -129,6 +127,9 @@ require("pi").setup({
     underline = true,
     virtual_text = false,
   },
+  keymaps = {
+    prefix = "<leader>p",
+  },
 })
 ```
 
@@ -140,9 +141,52 @@ require("pi").setup({
 | `pi_executable` | `"pi"` | Pi executable name or path |
 | `extension_path` | bundled extension | Override the companion extension used by headless Pi |
 | `diagnostics` | signs and underlines | Options passed to `vim.diagnostic.config` for Pi findings |
+| `keymaps` | `<leader>p` mappings | Mapping prefix and action suffixes; use `false` to disable all mappings |
+| `which_key` | Pi group and icon | WhichKey metadata; use `false` to disable the integration |
 
 Pi is never started when Neovim launches. A worker starts only after an
 explicit send, subject to `fallback`.
+
+### Keymaps
+
+The default mappings keep all Pi actions under `<leader>p`:
+
+| Mapping | Modes | Action |
+| --- | --- | --- |
+| `<leader>pa` | Normal, Visual | Add the current file or selection to the context draft |
+| `<leader>ps` | Normal, Visual | Send the current file or selection immediately |
+| `<leader>pS` | Normal | Send the context draft |
+| `<leader>pv` | Normal | View the context draft |
+| `<leader>pd` | Normal | Delete the context item under the cursor |
+| `<leader>pr` | Normal | Refresh the context item under the cursor |
+| `<leader>pm` | Normal | Move the context item under the cursor |
+| `<leader>pc` | Normal | Clear the context draft |
+| `<leader>pA` | Normal | Attach a Pi session |
+| `<leader>pl` | Normal | List Pi sessions |
+| `<leader>pf` | Normal | Show findings |
+| `<leader>pR` | Normal | Reply to the finding under the cursor |
+| `<leader>pC` | Normal | Clear findings |
+| `<leader>po` | Normal | Open the latest headless response |
+| `<leader>pi` | Normal | Inspect status |
+| `<leader>pq` | Normal | Stop the headless worker |
+
+Change the prefix or any action suffix in `setup()`. Set an action to `false`
+to leave it unmapped:
+
+```lua
+require("pi").setup({
+  keymaps = {
+    prefix = "<leader>a",
+    add_context = "x",
+    send_current = "s",
+    stop = false,
+  },
+})
+```
+
+Set `keymaps = false` to install no mappings and define your own with
+`vim.keymap.set`. If WhichKey is installed, pi.nvim registers the group and a
+consistent icon automatically; set `which_key = false` to opt out.
 
 ## Commands
 
