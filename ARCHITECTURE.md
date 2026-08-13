@@ -34,6 +34,7 @@ lua/pi/session.lua       per-root target state; discover/attach/start/stop
 lua/pi/transport/socket.lua  client for an opted-in Pi terminal session
 lua/pi/transport/rpc.lua     client for a spawned `pi --mode rpc` worker
 lua/pi/findings.lua      findings store -> Neovim diagnostics
+lua/pi/keymaps.lua       configurable mappings + optional WhichKey metadata
 lua/pi/ui.lua            every prompt, picker, and scratch listing
 lua/pi/project.lua       root/containment/state-file rules
 lua/pi/health.lua        :checkhealth pi
@@ -65,7 +66,7 @@ Public functions (each is one `:Pi*` command, wired in `plugin/pi.lua`):
 
 | Function | Command | Job |
 |---|---|---|
-| `setup(options)` | — | merge config, configure diagnostics, install autocommands (revalidate findings on edit/enter/write; stop headless workers on exit) |
+| `setup(options)` | — | merge config, install mappings, configure diagnostics, and install autocommands (revalidate findings on edit/enter/write; stop headless workers on exit) |
 | `context_add(opts)` | `:PiContextAdd` | capture file or `:range`, prompt for a note, append to the draft |
 | `context_show()` | `:PiContextShow` | open the draft listing scratch buffer |
 | `context_remove()` | `:PiContextRemove` | drop the draft item under the cursor |

@@ -16,6 +16,31 @@
 ---@field pi_executable string
 ---@field extension_path string Path to the companion extension Pi loads.
 ---@field diagnostics vim.diagnostic.Opts Applied to this plugin's diagnostic namespace.
+---@field keymaps pi.Keymaps|false Default mappings, or false to install none.
+---@field which_key pi.WhichKeyConfig|false Optional WhichKey group and icon metadata.
+
+---@class pi.Keymaps
+---@field prefix string Prepended to each enabled action suffix.
+---@field add_context string|false
+---@field send_current string|false
+---@field send_draft string|false
+---@field show_context string|false
+---@field remove_context string|false
+---@field refresh_context string|false
+---@field move_context string|false
+---@field clear_context string|false
+---@field attach string|false
+---@field sessions string|false
+---@field findings string|false
+---@field reply string|false
+---@field clear_findings string|false
+---@field response string|false
+---@field status string|false
+---@field stop string|false
+
+---@class pi.WhichKeyConfig
+---@field group string
+---@field icon string|table
 
 -- wire: Finding in protocol.ts. Editor-only review annotations; nothing here is
 -- ever written back to a source file.

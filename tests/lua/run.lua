@@ -8,6 +8,33 @@
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
 require("pi").setup({ max_context_bytes = 1024 * 1024 })
 
+local function mapping(mode, lhs)
+	return vim.fn.maparg(lhs, mode, false, true)
+end
+
+-- setup() owns a complete, mnemonic mapping set. Range-aware actions use `:`
+-- mappings in Visual mode so Neovim passes the selection to the command.
+assert(mapping("n", "<leader>pa").rhs == ":PiContextAdd<cr>")
+assert(mapping("x", "<leader>pa").rhs == ":PiContextAdd<cr>")
+assert(mapping("n", "<leader>ps").rhs == ":PiSend<cr>")
+assert(mapping("x", "<leader>ps").rhs == ":PiSend<cr>")
+assert(mapping("x", "<leader>pS").lhs == nil)
+
+local keymaps = require("pi.keymaps")
+local custom_keymaps = vim.tbl_deep_extend("force", {}, keymaps.defaults, {
+	prefix = "<leader>z",
+	add_context = "a",
+	send_current = false,
+})
+local keymap_group = vim.api.nvim_create_augroup("pi.nvim.tests.keymaps", { clear = true })
+keymaps.setup(custom_keymaps, false, keymap_group)
+assert(mapping("n", "<leader>pa").lhs == nil, "reconfiguring must remove old Pi mappings")
+assert(mapping("n", "<leader>za").rhs == ":PiContextAdd<cr>")
+assert(mapping("x", "<leader>za").rhs == ":PiContextAdd<cr>")
+assert(mapping("n", "<leader>zs").lhs == nil, "false must disable an action")
+keymaps.setup(false, false, keymap_group)
+assert(mapping("n", "<leader>za").lhs == nil, "keymaps=false must remove all Pi mappings")
+
 -- A real Git repository, because project roots are resolved with git rev-parse.
 local project = vim.fn.tempname()
 vim.fn.mkdir(project, "p")
