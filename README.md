@@ -73,8 +73,8 @@ Run `:checkhealth pi` after installation to verify the integration.
 ## Quick Start
 
 1. Start Pi from the root of your project.
-2. Run `/nvim-bridge enable` in Pi. This opts that terminal session into local
-   discovery by Neovim.
+2. Run `/nvim-bridge` in Pi. This toggles that terminal session into or out of
+   local discovery by Neovim; `enable` and `disable` are also available.
 3. Open a saved project file in Neovim and run `:PiSend`. To send only a visual
    selection, select it first and run `:PiSend` from Visual mode.
 4. Enter an instruction when prompted. The source, path, line range, and
@@ -97,9 +97,9 @@ remove it.
 
 ### Interactive Pi
 
-Run `/nvim-bridge enable` in a Pi terminal to make only that session available
-to Neovim. Sessions are matched to the current project root. Use `:PiAttach` or
-`:PiSessions` when more than one session is available.
+Run `/nvim-bridge` in a Pi terminal to toggle whether only that session is
+available to Neovim. Sessions are matched to the current project root. Use
+`:PiAttach` or `:PiSessions` when more than one session is available.
 
 The prompt, streamed response, and normal Pi controls remain in the terminal.
 Closing Neovim does not stop an interactive Pi session.

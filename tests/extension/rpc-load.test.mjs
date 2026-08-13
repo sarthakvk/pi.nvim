@@ -14,7 +14,7 @@ const packageRoot = new URL("../..", import.meta.url).pathname;
 test("companion extension loads in Pi RPC mode", async () => {
   const child = spawn(
     "pi",
-    ["--mode", "rpc", "--extension", "./pi-extension/index.ts"],
+    ["-ne", "--mode", "rpc", "--extension", "./pi-extension/index.ts"],
     {
       cwd: packageRoot,
       stdio: ["pipe", "pipe", "pipe"],
