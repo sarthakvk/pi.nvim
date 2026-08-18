@@ -144,6 +144,114 @@ vim.fn.writefile({ "external", "epsilon" }, two_path)
 local stale = context.range(0, 1, 1)
 assert(not stale, "externally changed buffers must be refused")
 
+-- Pointers stand in for an excerpt exactly where an excerpt is impossible, so
+-- every buffer state context.range refuses is checked here for the opposite
+-- answer. The file on disk has moved on from this buffer, from the check above.
+vim.api.nvim_win_set_cursor(0, { 2, 0 })
+local drifted, drifted_reason = context.pointer(0, nil, nil)
+assert(drifted, drifted_reason)
+assert(drifted.relative_path == "two.txt")
+assert(drifted.cursor_line == 2, "with no selection the pointer is the cursor line")
+assert(drifted.start_line == nil and drifted.end_line == nil)
+-- pi.Pointer does not declare `text`, which is the property under test;
+-- lua-language-server flags the access for exactly that reason.
+---@diagnostic disable-next-line: undefined-field
+assert(drifted.text == nil, "a pointer must never carry source")
+
+vim.api.nvim_buf_set_lines(0, 0, 1, false, { "unsaved" })
+assert(not context.range(0, 1, 1), "precondition: a modified buffer cannot be excerpted")
+local modified_pointer, modified_reason = context.pointer(0, nil, nil)
+assert(modified_pointer, modified_reason)
+assert(modified_pointer.modified, "a pointer must report the unsaved buffer rather than refuse it")
+vim.cmd("edit!")
+
+-- A selection points at the range instead of the cursor.
+local selected = context.pointer(0, 1, 2)
+assert(selected and selected.start_line == 1 and selected.end_line == 2)
+assert(selected.cursor_line == nil, "a selection replaces the cursor line, it does not join it")
+
+-- An empty file: line_count is 1 but the file has no lines, which is what made
+-- context.file report an invalid range.
+local empty_path = project .. "/empty.txt"
+io.open(empty_path, "w"):close()
+vim.cmd("edit " .. vim.fn.fnameescape(empty_path))
+assert(not context.file(0), "precondition: an empty file cannot be excerpted")
+local empty_pointer, empty_reason = context.pointer(0, nil, nil)
+assert(empty_pointer, empty_reason)
+assert(empty_pointer.relative_path == "empty.txt" and empty_pointer.exists)
+
+-- A file that has never been written has nothing on disk to read.
+vim.cmd("edit " .. vim.fn.fnameescape(project .. "/unwritten.txt"))
+assert(not context.file(0), "precondition: an unwritten file cannot be excerpted")
+local unwritten, unwritten_reason = context.pointer(0, nil, nil)
+assert(unwritten, unwritten_reason)
+assert(unwritten.relative_path == "unwritten.txt")
+assert(not unwritten.exists, "a pointer must report that the path is not on disk")
+
+-- With no file there is nothing to point at, and :PiSend falls back to sending
+-- the instruction on its own.
+vim.cmd("enew")
+local nameless, nameless_reason = context.pointer(0, nil, nil)
+assert(not nameless and nameless_reason == "buffer has no file")
+
+-- A pointer reads nothing, so what stops it inventing a location is the set of
+-- checks below. A directory has a real path and would otherwise pass.
+vim.cmd("edit " .. vim.fn.fnameescape(project))
+local directory, directory_reason = context.pointer(0, nil, nil)
+assert(not directory, "a directory is not something Pi can read as a file")
+assert(directory_reason, "the refusal must carry a reason to report")
+-- Reading one must not throw either: io.open succeeds on a directory and the
+-- read that follows fails without an error string.
+local unreadable, unreadable_reason = context.range(0, 1, 1)
+assert(not unreadable and type(unreadable_reason) == "string")
+
+-- A plugin's buffer name is not a path, and turning one into a project root
+-- would send Pi somewhere that does not exist.
+local virtual = vim.api.nvim_create_buf(true, true)
+vim.api.nvim_buf_set_name(virtual, "oil://" .. project)
+local invented, invented_reason = context.pointer(virtual, nil, nil)
+assert(not invented, "a non-file buffer must not become a pointer")
+assert(invented_reason, "the refusal must carry a reason to report")
+
+-- Refusing the pointer is only half of it: a send from such a buffer still has
+-- to be addressed to a real project, or it goes looking for a Pi that cannot be
+-- running there. current_root is local to pi.init, so it is observed through the
+-- root the draft listing is opened for.
+local opened_root
+local real_open_draft = ui.open_draft
+---@diagnostic disable-next-line: duplicate-set-field
+ui.open_draft = function(root_argument)
+	opened_root = root_argument
+end
+vim.api.nvim_set_current_buf(virtual)
+require("pi").context_show()
+assert(opened_root, "the draft listing must resolve some root")
+assert(not opened_root:find("oil:", 1, true), "a buffer name that is not a path must not become the root")
+vim.cmd("help help")
+require("pi").context_show()
+assert(not opened_root:find("/doc", 1, true), "a :help page's runtime path must not become the root")
+vim.cmd("helpclose")
+ui.open_draft = real_open_draft
+
+-- The pointer envelope is the bundle envelope with the excerpt fields left out;
+-- what Pi must not receive is any source text or an invented kind.
+local pointer_envelope = draft.envelope({
+	id = "request",
+	root = project,
+	note = "what does this do?",
+	contexts = {
+		{ id = "item", path = "two.txt", cursor_line = 12, note = "" },
+	},
+})
+local pointer_decoded = vim.json.decode(pointer_envelope)
+assert(pointer_decoded.note == "what does this do?")
+assert(#pointer_decoded.contexts == 1)
+assert(pointer_decoded.contexts[1].path == "two.txt")
+assert(pointer_decoded.contexts[1].cursor_line == 12)
+assert(pointer_decoded.contexts[1].text == nil, "the pointer envelope must carry no source")
+assert(pointer_decoded.contexts[1].kind == nil)
+assert(pointer_decoded.contexts[1].start_line == nil)
+
 vim.cmd("bwipeout!")
 vim.fn.delete(project, "rf")
 print("lua tests passed")

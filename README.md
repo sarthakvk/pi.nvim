@@ -1,25 +1,29 @@
 # pi.nvim
 
-Send saved code from Neovim to an existing [Pi](https://pi.dev) conversation
-and receive review findings back as native diagnostics.
+Point an existing [Pi](https://pi.dev) conversation at the code you are looking
+at in Neovim, or send exact excerpts of it, and receive review findings back as
+native diagnostics.
 
 > [!WARNING]
 > pi.nvim is under active development. It works as a prototype, but its API and
 > behavior may change.
 
-pi.nvim keeps code navigation in Neovim and the conversation in Pi. Send a
-file, a visual selection, or a draft assembled from several files without
-copying source into a terminal. Pi can respond in its normal terminal UI or run
-as a project-scoped headless worker managed by Neovim.
+pi.nvim keeps code navigation in Neovim and the conversation in Pi. Ask about
+the file you are in without leaving it, or assemble a draft of excerpts from
+several files, without copying source into a terminal. Pi can respond in its
+normal terminal UI or run as a project-scoped headless worker managed by
+Neovim.
 
 ## Features
 
-- Sends files and line ranges with their project-relative locations
-- Builds multi-file context drafts before starting a Pi turn
+- Tells Pi where you are — file, selection, or cursor line — and lets it read
+  from there, so a question needs no setup
+- Builds multi-file context drafts, quoting exact excerpts, before starting a
+  Pi turn
 - Connects only to Pi terminal sessions that explicitly opt in
 - Starts and resumes a headless Pi session when no terminal session is available
 - Renders Pi review findings with Neovim diagnostics, without changing source
-- Refuses unsaved or externally changed buffers instead of sending stale code
+- Refuses unsaved or externally changed buffers rather than quoting stale code
 - Includes configurable `<leader>p` mappings and adds no permanent UI
 
 ## Requirements
@@ -73,12 +77,19 @@ Run `:checkhealth pi` after installation to verify the integration.
 1. Start Pi from the root of your project.
 2. Run `/nvim-bridge` in Pi. This toggles that terminal session into or out of
    local discovery by Neovim; `enable` and `disable` are also available.
-3. Open a saved project file in Neovim and run `:PiSend`. To send only a visual
-   selection, select it first and run `:PiSend` from Visual mode.
-4. Enter an instruction when prompted. The source, path, line range, and
-   instruction are sent to the opted-in Pi conversation.
+3. Open a project file in Neovim and run `:PiSend`. To point at a specific
+   range, select it first and run `:PiSend` from Visual mode.
+4. Enter an instruction when prompted. Pi receives the instruction plus the
+   file's project-relative path and where you are in it — the selected range,
+   or the line your cursor is on — and reads the file itself.
 
-For a request that needs several files, build a draft instead:
+`:PiSend` sends no source, so it works on any buffer: an empty file, one you
+have not written yet, or one with unsaved changes. Pi reads what is on disk, so
+pi.nvim warns when that is behind your buffer. With no file at all, the
+instruction is sent on its own.
+
+To have Pi work from exact source rather than reading for itself — a quote of
+particular lines, or several files at once — build a draft instead:
 
 ```vim
 :PiContextAdd explain how this type is used
@@ -154,7 +165,7 @@ The default mappings keep all Pi actions under `<leader>p`:
 | Mapping | Modes | Action |
 | --- | --- | --- |
 | `<leader>pa` | Normal, Visual | Add the current file or selection to the context draft |
-| `<leader>ps` | Normal, Visual | Send the current file or selection immediately |
+| `<leader>ps` | Normal, Visual | Send an instruction pointing at the current file or selection |
 | `<leader>pS` | Normal | Send the context draft |
 | `<leader>pv` | Normal | View the context draft |
 | `<leader>pd` | Normal | Delete the context item under the cursor |
@@ -192,8 +203,8 @@ consistent icon automatically; set `which_key = false` to opt out.
 
 | Command | Description |
 | --- | --- |
-| `:[range]PiSend [note]` | Send the current saved file or range immediately |
-| `:[range]PiContextAdd [note]` | Add the current saved file or range to the project draft |
+| `:[range]PiSend [note]` | Send an instruction that points Pi at the current file or range |
+| `:[range]PiContextAdd [note]` | Add the current saved file or range, quoted, to the project draft |
 | `:PiContextShow` | Open the current project's draft |
 | `:PiContextRemove` | Remove the draft item under the cursor |
 | `:PiContextRefresh` | Re-read the draft item under the cursor from disk |
@@ -214,8 +225,12 @@ the current turn or wait as a follow-up.
 
 ## Safety and Limitations
 
-- Context always comes from saved files on disk. pi.nvim never saves a buffer
-  for you and refuses modified or externally stale buffers.
+- Quoted source always comes from saved files on disk. pi.nvim never saves a
+  buffer for you, and the draft refuses modified or externally stale buffers
+  rather than sending source that has drifted.
+- `:PiSend` quotes nothing, so it is allowed where the draft is not. It sends a
+  path and a location, and Pi reads the saved file — which is not your buffer if
+  you have unsaved changes. pi.nvim warns when that is the case.
 - The bridge transport stays on the local machine, but Pi sends prompts and
   source to whichever model provider you configured.
 - Pi is not made read-only or sandboxed. It retains its normal tools and

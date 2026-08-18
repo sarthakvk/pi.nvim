@@ -194,7 +194,11 @@ function M.bundle(root, overall_note, maximum_bytes)
 end
 
 -- The transport accepts a user message as text, so keep the complete request
--- structured as JSON without adding a textual envelope.
+-- structured as JSON without adding a textual envelope. Fields are copied one by
+-- one rather than passing the request through, so nothing a caller happens to
+-- hang off an item reaches Pi. An excerpt carries `kind`, its range, and `text`;
+-- a pointer from :PiSend carries none of those beyond the location it names, and
+-- the absent fields simply do not appear in the JSON.
 ---@param request pi.BundleRequest
 ---@return string json Read by formatContextEnvelope in pi-extension/protocol.ts.
 function M.envelope(request)
@@ -211,6 +215,7 @@ function M.envelope(request)
 			path = item.path,
 			start_line = item.start_line,
 			end_line = item.end_line,
+			cursor_line = item.cursor_line,
 			text = item.text,
 			note = item.note,
 		})
