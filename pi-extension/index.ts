@@ -43,6 +43,17 @@ import {
 // --extension); registering the same tool twice would fail, so the first load
 // marks the API object and later ones return immediately.
 const GUARD = Symbol.for("pi.nvim.extension.loaded");
+// Roots whose bridge is opted in, kept on globalThis so the opt-in outlives a
+// session swap. /new, /resume, /fork, and /reload tear this extension instance
+// down and rebind a fresh one, which may re-evaluate the module and lose
+// anything held at module scope.
+const OPTED_IN = Symbol.for("pi.nvim.extension.optedIn");
+// Socket path currently bound per root, across every instance in this process.
+// A duplicate load leaves two live instances, each with its own module scope and
+// each receiving session_start; without a shared claim both would bind the same
+// path, the second unlinking the first's socket and leaving it listening on an
+// inode nothing can reach.
+const BOUND = Symbol.for("pi.nvim.extension.bound");
 // Session entry type recording that findings were cleared. Clearing has to be
 // part of the history, otherwise replaying it would resurrect them.
 const FINDINGS_CLEAR_TYPE = "pi.nvim/findings-clear";
@@ -68,6 +79,23 @@ type Runtime = {
 // require.
 function stringEnum<T extends readonly string[]>(values: T) {
   return Type.Unsafe<T[number]>({ type: "string", enum: values });
+}
+
+function optedInRoots(): Set<string> {
+  const global = globalThis as unknown as Record<symbol, Set<string>>;
+  return (global[OPTED_IN] ??= new Set());
+}
+
+function boundSockets(): Map<string, string> {
+  const global = globalThis as unknown as Record<symbol, Map<string, string>>;
+  return (global[BOUND] ??= new Map());
+}
+
+// Keyed by root rather than a bare flag so a session that switches project
+// directories does not inherit the previous project's opt-in.
+function setOptedIn(root: string, optedIn: boolean): void {
+  if (optedIn) optedInRoots().add(root);
+  else optedInRoots().delete(root);
 }
 
 function runtimeDirectory(): string {
@@ -155,6 +183,13 @@ function closeServer(runtime: Runtime): void {
   // again; Neovim only prunes them lazily.
   if (runtime.socketPath) rmSync(runtime.socketPath, { force: true });
   if (runtime.descriptorPath) rmSync(runtime.descriptorPath, { force: true });
+  // Only release a claim this runtime actually holds, so a duplicate instance
+  // that never bound cannot hand this root's socket to a third.
+  if (
+    runtime.socketPath &&
+    boundSockets().get(runtime.root) === runtime.socketPath
+  )
+    boundSockets().delete(runtime.root);
   runtime.server = undefined;
 }
 
@@ -306,37 +341,54 @@ function piSend(
 // is what keeps arbitrary Pi processes out of Neovim's reach.
 function enable(runtime: Runtime): string {
   if (runtime.server) return "Pi bridge is already enabled";
+  // Another instance of this extension in the same process already serves this
+  // project; binding a second server would only unlink its socket.
+  if (boundSockets().has(runtime.root))
+    return "Pi bridge is already enabled for this project";
   const sessionId = runtime.ctx.sessionManager.getSessionId();
   const name = descriptorName(runtime.root, sessionId);
   const directory = runtimeDirectory();
   runtime.socketPath = join(directory, `${name}.sock`);
   runtime.descriptorPath = join(directory, `${name}.json`);
+  boundSockets().set(runtime.root, runtime.socketPath);
   // A socket left behind by a crashed session with the same id would block bind.
   if (existsSync(runtime.socketPath))
     rmSync(runtime.socketPath, { force: true });
   const server = createServer((client) => serveClient(runtime, client));
   runtime.server = server;
   // The descriptor is only published once the socket is actually accepting, so
-  // Neovim never finds an address it cannot connect to.
-  server.once("listening", () => writeDescriptor(runtime));
+  // Neovim never finds an address it cannot connect to. Guarded like the error
+  // handler below: a session replaced within this tick has already closed this
+  // server, and descriptor() would then read a session context that is gone.
+  server.once("listening", () => {
+    if (runtime.server === server) writeDescriptor(runtime);
+  });
   // An unhandled 'error' would take Pi's whole process down, and a listen can
   // fail for reasons outside this session's control (EACCES, EADDRINUSE).
   server.on("error", (error: Error) => {
     // Only tear the runtime down while this server is still the current one: a
     // later enable may have replaced it, and that one's socket must survive.
-    if (runtime.server === server) closeServer(runtime);
-    else server.close();
+    if (runtime.server === server) {
+      closeServer(runtime);
+      // Drop the opt-in too, so a session that cannot listen does not go on
+      // retrying the same failing bind after every /new.
+      setOptedIn(runtime.root, false);
+    } else server.close();
     runtime.ctx.ui.notify(
       `Pi bridge could not listen: ${error.message}`,
       "error",
     );
   });
   server.listen(runtime.socketPath);
+  // Recorded here rather than in the teardown path so the opt-in is right even
+  // when a session ends without a clean shutdown.
+  setOptedIn(runtime.root, true);
   return `Pi bridge is enabling for ${runtime.root}`;
 }
 
 function disable(runtime: Runtime): string {
   closeServer(runtime);
+  setOptedIn(runtime.root, false);
   return "Pi bridge disabled";
 }
 
@@ -362,6 +414,12 @@ export default function (pi: ExtensionAPI): void {
       changedPaths: new Set(),
     };
     restoreFindings(runtime);
+    // /new, /resume, /fork, and /reload replace this instance, and the socket
+    // was named after the session it belonged to, so it went away with it.
+    // Re-open one for the replacement: the user opted this project in, and
+    // clearing the conversation is not a request to hide from Neovim. Neovim
+    // reconnects on its own, picking up the new session id from the descriptor.
+    if (optedInRoots().has(root)) enable(runtime);
   });
   // Neovim sends the same JSON envelope through both transports: the interactive
   // socket reaches here through pi.sendUserMessage(), while RPC prompts reach
@@ -373,6 +431,9 @@ export default function (pi: ExtensionAPI): void {
       ? undefined
       : { action: "transform", text: formatted };
   });
+  // Closes the socket without touching the opt-in: on quit nothing outlives the
+  // process anyway, and on a session swap the instance taking over re-opens one
+  // under the new session's name.
   pi.on("session_shutdown", () => {
     changedToolPaths.clear();
     if (runtime) closeServer(runtime);
