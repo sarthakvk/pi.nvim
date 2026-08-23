@@ -44,10 +44,13 @@ child.stdout.on("data", (chunk) => {
 // against it is matched against the stripped text.
 const CONTROL_SEQUENCES =
   /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+function stripped() {
+  return output.replace(CONTROL_SEQUENCES, "");
+}
 // Pi prints its name and version before it accepts input, and that banner is
 // the same whatever model the machine running this test has configured.
 function piStarted() {
-  return /\bpi\s+v\d+\.\d+\.\d+/.test(output.replace(CONTROL_SEQUENCES, ""));
+  return /\bpi\s+v\d+\.\d+\.\d+/.test(stripped());
 }
 
 // Pi's output is the only progress signal available, so the whole test is
@@ -57,7 +60,16 @@ function waitFor(predicate, message) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 15_000;
     const timer = setInterval(() => {
-      if (predicate()) {
+      let satisfied;
+      try {
+        satisfied = predicate();
+      } catch (error) {
+        // A throw out of a timer callback would skip the cleanup in `finally`
+        // and leave the Pi child running, so it fails the wait instead.
+        clearInterval(timer);
+        return reject(error);
+      }
+      if (satisfied) {
         clearInterval(timer);
         resolve();
       } else if (Date.now() > deadline) {
@@ -79,40 +91,63 @@ try {
     process.env.XDG_RUNTIME_DIR || join(stateHome, "nvim", "run"),
     "pi.nvim",
   );
-  let descriptor;
-  // Other sessions may have left descriptors behind, so match on this project.
-  await waitFor(() => {
-    descriptor = readdirSync(runtime)
+  // Every descriptor this project has published. Other sessions share the
+  // runtime directory, so this matches on the project; a descriptor being
+  // rewritten by one of them is skipped rather than thrown out of a poll.
+  function projectDescriptors() {
+    return readdirSync(runtime)
       .filter((name) => name.endsWith(".json"))
-      .map((name) => ({
-        name,
-        value: JSON.parse(readFileSync(join(runtime, name), "utf8")),
-      }))
-      .find(({ value }) => value.root === project);
+      .flatMap((name) => {
+        try {
+          return [
+            { name, value: JSON.parse(readFileSync(join(runtime, name), "utf8")) },
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .filter(({ value }) => value.root === project);
+  }
+  // The bridge serves one session at a time, so this project should never have
+  // more than one; `notSessionId` makes a poll wait for the replacement rather
+  // than settling for a stale descriptor that should have been removed.
+  function findDescriptor(notSessionId) {
+    return projectDescriptors().find(
+      ({ value }) => value.session_id !== notSessionId,
+    );
+  }
+  // Connects and completes the handshake exactly as the Lua transport does,
+  // returning the descriptor the bridge answered with.
+  async function handshake(socketPath, id) {
+    const socket = createConnection(socketPath);
+    let received = "";
+    socket.on("data", (chunk) => {
+      received += chunk;
+    });
+    await new Promise((resolve, reject) =>
+      socket.once("connect", resolve).once("error", reject),
+    );
+    socket.write(
+      JSON.stringify({ id, type: "hello", version: 1, root: project }) + "\n",
+    );
+    await waitFor(
+      () => received.includes(`"id":"${id}"`),
+      "bridge handshake did not respond",
+    );
+    const response = JSON.parse(
+      received.split("\n").find((line) => line.includes(`"id":"${id}"`)),
+    );
+    socket.destroy();
+    return response.data;
+  }
+  let descriptor;
+  await waitFor(() => {
+    descriptor = findDescriptor();
     return Boolean(descriptor);
   }, "bridge descriptor was not created");
-  const socket = createConnection(descriptor.value.socket_path);
-  let received = "";
-  socket.on("data", (chunk) => {
-    received += chunk;
-  });
-  await new Promise((resolve, reject) =>
-    socket.once("connect", resolve).once("error", reject),
-  );
-  socket.write(
-    JSON.stringify({ id: "hello", type: "hello", version: 1, root: project }) +
-      "\n",
-  );
-  await waitFor(
-    () => received.includes('"id":"hello"'),
-    "bridge handshake did not respond",
-  );
-  const response = JSON.parse(
-    received.split("\n").find((line) => line.includes('"id":"hello"')),
-  );
-  assert.equal(response.data.root, project);
-  assert.equal(response.data.version, 1);
-  socket.destroy();
+  const response = await handshake(descriptor.value.socket_path, "hello");
+  assert.equal(response.root, project);
+  assert.equal(response.version, 1);
 
   // A client that closes right after writing leaves its last message without a
   // trailing newline; the bridge must still serve it.
@@ -141,18 +176,70 @@ try {
   );
   halfOpen.destroy();
 
+  // Clearing the conversation is not a request to hide from Neovim: /new
+  // replaces the session, and the bridge has to follow it under the new
+  // session's name rather than leaving the project unreachable.
+  child.stdin.write("/new\r");
+  let replacement;
+  await waitFor(() => {
+    replacement = findDescriptor(descriptor.value.session_id);
+    return Boolean(replacement);
+  }, "bridge did not follow the session across /new");
+  assert.ok(
+    !existsSync(join(runtime, descriptor.name)),
+    "the replaced session's descriptor was left behind",
+  );
+  const renewed = await handshake(replacement.value.socket_path, "renewed");
+  assert.equal(renewed.root, project);
+  assert.equal(renewed.session_id, replacement.value.session_id);
+
   // With no argument the command toggles the bridge back off.
   child.stdin.write("/nvim-bridge\r");
   await waitFor(
     () =>
-      !existsSync(join(runtime, descriptor.name)) &&
-      !existsSync(descriptor.value.socket_path),
+      !existsSync(join(runtime, replacement.name)) &&
+      !existsSync(replacement.value.socket_path),
     "bridge descriptor was not removed by the toggle",
   );
 
-  // Killing Pi below skips its shutdown hook, so clean up what it published.
-  rmSync(join(runtime, descriptor.name), { force: true });
-  rmSync(descriptor.value.socket_path, { force: true });
+  // The other half of the same rule: following the session must not resurrect a
+  // bridge the user turned off. Discovery is opt-in, so a /new after a disable
+  // has to leave the project invisible.
+  //
+  // A descriptor that must never appear can only be checked by watching for a
+  // while: this samples throughout the window rather than once at the end, so a
+  // bridge that came back and was torn down again would still be caught. Pi's
+  // own output cannot stand in for it — the TUI diffs its render, so a repeated
+  // "New session started" is never written to the terminal a second time.
+  child.stdin.write("/new\r");
+  let advertised;
+  const watcher = setInterval(() => {
+    advertised = advertised || findDescriptor();
+  }, 20);
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  clearInterval(watcher);
+  assert.equal(
+    advertised,
+    undefined,
+    "/new re-advertised a bridge the user had disabled",
+  );
+
+  // And that /new really did replace the session, so the check above was not
+  // just watching a Pi that did nothing at all: opting back in has to advertise
+  // a third session id.
+  child.stdin.write("/nvim-bridge enable\r");
+  let reopened;
+  await waitFor(() => {
+    reopened = findDescriptor(replacement.value.session_id);
+    return Boolean(reopened);
+  }, "the bridge did not come back after an explicit enable");
+  assert.notEqual(reopened.value.session_id, descriptor.value.session_id);
+
+  // Killing Pi below skips its shutdown hook, so clean up anything it published.
+  for (const { name, value } of projectDescriptors()) {
+    rmSync(join(runtime, name), { force: true });
+    rmSync(value.socket_path, { force: true });
+  }
   console.log("socket bridge end-to-end passed");
 } finally {
   child.kill("SIGTERM");

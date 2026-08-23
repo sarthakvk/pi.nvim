@@ -214,14 +214,27 @@ editor-only; nothing here writes source.
 
 ## Pi side (`pi-extension/`)
 
-`index.ts` default-exports the extension entry point; a symbol guard makes a
-double load a no-op.
+`index.ts` default-exports the extension entry point; a symbol stamped on the API
+object makes re-entering the same load a no-op. A genuine double load (installed
+package plus `--extension`) still yields two instances, which is why the bound
+socket is claimed process-wide — see below.
 
 - `/nvim-bridge [enable|disable|clear [id]]` (`pi.registerCommand`) — no arguments
   toggle the **opt-in** bridge; `enable` binds a unix socket and writes a 0600
   descriptor into the 0700 runtime directory, while `disable` removes them.
   Without enable, a Pi process is invisible to Neovim, even in the same project.
   `clear` also serves headless Pi, which has no socket.
+- The opt-in follows the project, not one conversation. `/new`, `/resume`,
+  `/fork`, `/clone`, and `/reload` each close the old session and rebind a fresh
+  extension instance, so `session_start` re-opens the socket — named after the
+  new session for the first four, the same name again for `/reload`, which keeps
+  its session id. Two symbols on `globalThis` carry this across the swap, because
+  the module itself may be re-evaluated: `optedIn` (roots the user turned on,
+  keyed by root so `/resume` into another project stays dark) and `bound` (the
+  socket path a live server holds, so a duplicate instance cannot unlink it).
+  Neither is persisted — restarting Pi means opting in again. Neovim reconnects
+  on its own (`ensure_target` re-discovers once the transport closes), so it
+  picks up the replacement session's id rather than keeping a stale one.
 - `nvim_publish_findings` tool (`pi.registerTool`) — Pi's only way to return
   annotations. The whole batch is validated before any of it is published, and each
   finding's `expected_text` must match disk.

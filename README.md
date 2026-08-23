@@ -110,6 +110,12 @@ Run `/nvim-bridge` in a Pi terminal to toggle whether only that session is
 available to Neovim. Sessions are matched to the current project root. Use
 `:PiAttach` or `:PiSessions` when more than one session is available.
 
+The opt-in belongs to that Pi process, not to one conversation: starting a new
+session, resuming, forking, or reloading keeps the bridge on and re-advertises
+whichever session is now current. Neovim reattaches on the next send. Quitting
+Pi ends the opt-in, so a fresh `pi` is invisible until you run `/nvim-bridge`
+again.
+
 The prompt, streamed response, and normal Pi controls remain in the terminal.
 Closing Neovim does not stop an interactive Pi session.
 
