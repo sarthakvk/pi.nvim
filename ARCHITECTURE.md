@@ -1,8 +1,9 @@
 # Architecture
 
-pi.nvim is two halves of one bridge: a Neovim plugin (Lua) that captures saved
-source and renders findings, and a Pi extension (TypeScript) that lets a Pi
-session be driven from the editor and publish annotations back.
+pi.nvim is two halves of one bridge: a Neovim plugin (Lua) that points Pi at the
+user's location or captures saved source, and renders findings; and a Pi
+extension (TypeScript) that lets a Pi session be driven from the editor and
+publish annotations back.
 
 ## Contents
 
@@ -28,7 +29,7 @@ session be driven from the editor and publish annotations back.
 ```
 plugin/pi.lua            :Pi* command definitions; the only startup cost
 lua/pi/init.lua          public API + command implementations (flow owner)
-lua/pi/context.lua       buffer/range -> excerpt record, read from disk
+lua/pi/context.lua       buffer/range -> excerpt read from disk, or a pointer to it
 lua/pi/draft.lua         per-root draft list, bundling, wire envelope
 lua/pi/session.lua       per-root target state; discover/attach/start/stop
 lua/pi/transport/socket.lua  client for an opted-in Pi terminal session
@@ -74,7 +75,7 @@ Public functions (each is one `:Pi*` command, wired in `plugin/pi.lua`):
 | `context_clear()` | `:PiContextClear` | empty the draft for this root |
 | `context_move(opts)` | `:PiContextMove {n}` | reorder the cursor item |
 | `context_send()` | `:PiContextSend` | prompt for an instruction, bundle the draft, deliver, clear on acceptance |
-| `send_current(opts)` | `:PiSend` | one-shot single-item bundle that bypasses the draft |
+| `send_current(opts)` | `:PiSend` | one-shot **pointer** send that bypasses the draft: a path plus the selected range or cursor line, no source |
 | `attach()` | `:PiAttach` | pick and attach an opted-in terminal session |
 | `sessions()` | `:PiSessions` | list attached + discoverable sessions |
 | `findings()` | `:PiFindings` | revalidate and open the findings listing |
@@ -89,25 +90,41 @@ Internal seams worth knowing:
 - `ensure_target(root, cb)` — the target-resolution policy: attached transport
   wins, else exactly one descriptor auto-attaches, else pick, else `config.fallback`
   (`ask` / `headless` / `none`) decides. Nothing starts Pi without a user send.
-- `deliver(root, request, on_sent)` — sends `draft.envelope(request)`; if Pi is
-  working it asks *steer vs. queue* rather than guessing.
+- `deliver(root, message, on_sent)` — sends one encoded message; if Pi is working
+  it asks *steer vs. queue* rather than guessing. Encoding stays with the caller,
+  which knows whether it is sending a draft bundle, a pointer, or an instruction
+  with no context at all.
 - `install_session_handlers(root)` — wires this module's reactions onto the
   session state table (findings, known changes, settled, exit, status/widget/title,
   editor prefill). Re-run before every attach/start because state outlives transports.
 - `report_known_changes(root, paths)` — `:checktime` for clean buffers, warn for
   modified ones. Never discards unsaved work.
-- `current_root()` — `vim.b.pi_root` (scratch listings) → buffer name → cwd.
+- `current_root()` — `vim.b.pi_root` (scratch listings) → buffer name → cwd. The
+  buffer name counts only for a normal buffer sitting in a real directory, so a
+  plugin's name (`oil://…`) or a `:help` page cannot become a project root that
+  no Pi could ever be attached to.
 
 ### `context.lua` — capture
 
-Turns a buffer into an excerpt read **from disk**.
+Two forms. An **excerpt** quotes the buffer, read **from disk**; a **pointer**
+quotes nothing and only says where the user is.
 
 - `buffer_is_saved(bufnr)` → `ok, path|reason`; rejects unnamed, modified, or
   externally-changed buffers (CRLF and trailing-newline normalised for the compare).
 - `range(bufnr, first, last)` → excerpt record `{root, path, relative_path,
   start_line, end_line, text, bufnr}`.
-- `file(bufnr)` → same, tagged `kind = "whole_file"`.
+- `file(bufnr)` → same, tagged `kind = "whole_file"`. Note that an empty file has
+  no lines to quote, so this refuses one even though the buffer is saved.
 - `read_range(path, first, last)` → `text` straight from disk, for re-reads.
+- `pointer(bufnr, first, last)` → `{root, path, relative_path, start_line?,
+  end_line?, cursor_line?, modified, exists}`. Reads nothing and compares nothing,
+  so it succeeds for every buffer naming a real file inside the root — including
+  empty, never-written, and modified ones, all of which `range` must refuse.
+  Because it never touches the file, the checks that a location is real are
+  explicit: `buftype` must be empty, the path must not be a directory, and an
+  unwritten file's parent directory must exist. Without them a plugin's buffer
+  name (`oil://…`) would become a project root that does not exist. `modified`
+  and `exists` are reported for the caller to warn about; they are not sent.
 
 ### `draft.lua` — collection, bundling, envelope
 
@@ -227,15 +244,26 @@ double load a no-op.
 
 - **Descriptor** (runtime dir JSON) — `version, root, session_id, session_file,
   display_name, pid, started_at, socket_path, activity, capabilities`.
-- **Request/bundle** — `{id, root, note, contexts: [{id, kind, path, start_line,
-  end_line, text, note}]}`.
+- **Request/bundle** — `{id, root, note, contexts: [...]}`, where a context is
+  either an excerpt `{id, kind, path, start_line, end_line, text, note}` or a
+  pointer `{id, path, note}` plus *either* `start_line`/`end_line` (a selection)
+  *or* `cursor_line`, or neither. Absent fields are omitted from the JSON.
+  `formatContextEnvelope` renders any context with no `text` as a location with
+  no code fence, and resolves its path against the envelope `root`, because Pi's
+  working directory may be a subdirectory of the root it was matched on.
+  `contexts` is empty when there was no file to point at; that envelope renders
+  as the bare note. It is still sent as JSON so that an instruction beginning
+  with `/` reaches the model instead of being run as a slash command.
 - **Finding** — `{id, request_id, context_item_id?, path, start_line, end_line,
   severity, title, message, expected_text}` (+ `stale`, `origin_session_id`,
   `origin_session_file` on the Neovim side).
 
 ## Invariants
 
-1. Only saved, on-disk source is sent; buffers are never saved for the user.
+1. Only saved, on-disk source is sent; buffers are never saved for the user. A
+   pointer sends no source at all, which is why it is allowed where an excerpt is
+   refused — but it makes Pi read the saved file, so the mismatch with a modified
+   buffer is warned about rather than hidden.
 2. Pi never starts, and is never steered, without an explicit user action.
 3. Discovery is opt-in — sharing a working directory is not enough.
 4. Findings are diagnostics; nothing in the findings path writes to a source file.
@@ -245,10 +273,11 @@ double load a no-op.
 
 ## Tests
 
-- `npm test` — `tests/lua/run.lua`, offline: capture refusals, extmark tracking,
-  and JSON envelope data handling.
-- `npm run test:extension` — `tests/extension/rpc-load.test.mjs`, offline: the
-  extension loads in `pi --mode rpc` without collision.
+- `npm test` — `tests/lua/run.lua`, offline: capture refusals, the pointer cases
+  those refusals leave behind, extmark tracking, and JSON envelope data handling.
+- `npm run test:extension` — offline: `rpc-load.test.mjs` loads the extension in
+  `pi --mode rpc` without collision, and `envelope.test.mjs` pins the Markdown
+  `formatContextEnvelope` produces for both excerpts and pointers.
 - `npm run test:e2e` — `tests/e2e/socket.mjs` (real Pi, opt-in + handshake) and
   `tests/e2e/run-headless.sh` → `headless.lua` (live model turn: known changes,
   findings, session resume).
@@ -259,6 +288,7 @@ double load a no-op.
 |---|---|
 | New `:Pi*` command | `plugin/pi.lua` + a public function in `lua/pi/init.lua` |
 | Change what gets captured / staleness rules | `lua/pi/context.lua` |
+| Change what `:PiSend` tells Pi about the user's location | `context.pointer` + `init.send_current` |
 | Change the message Pi receives | `draft.bundle` / `draft.envelope` |
 | Change target selection or fallback behaviour | `init.ensure_target`, `session.lua` |
 | New bridge request or event | `transport/socket.lua` + `serveClient` in `index.ts` (bump `VERSION` if incompatible) |

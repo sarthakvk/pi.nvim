@@ -161,17 +161,23 @@ export function parseJson(line: string): Record<string, unknown> | undefined {
   }
 }
 
+// Either an excerpt -- `text` plus the range it was taken from -- or a pointer,
+// which names a location and leaves the reading to Pi. A pointer has no `text`
+// and no `kind`, and carries whichever of the two locations the editor knew: the
+// range the user selected, or the line their cursor was on.
 type Context = {
-  text: string;
+  text?: string;
   note?: string;
   path: string;
-  start_line: number;
-  end_line: number;
-  kind: string;
+  start_line?: number;
+  end_line?: number;
+  cursor_line?: number;
+  kind?: string;
 };
 
 type ContextEnvelope = {
   note: string;
+  root?: string;
   contexts: Context[];
 };
 
@@ -182,39 +188,53 @@ function parseContextEnvelope(text: string): ContextEnvelope | undefined {
       return undefined;
     }
     if (typeof value.note !== "string") return undefined;
+    if (value.root !== undefined && typeof value.root !== "string") return undefined;
     const contexts = value.contexts.map((context: unknown) => {
       if (!context || typeof context !== "object") throw new Error("invalid context");
       const item = context as Record<string, unknown>;
-      if (
-        typeof item.text !== "string" ||
-        typeof item.path !== "string" ||
-        typeof item.kind !== "string" ||
-        item.path === "" ||
-        item.kind === ""
-      ) {
+      if (typeof item.path !== "string" || item.path === "") {
         throw new Error("invalid context metadata");
+      }
+      if (item.text !== undefined && typeof item.text !== "string") {
+        throw new Error("invalid context text");
+      }
+      if (item.kind !== undefined && (typeof item.kind !== "string" || item.kind === "")) {
+        throw new Error("invalid context kind");
       }
       if (item.note !== undefined && typeof item.note !== "string") {
         throw new Error("invalid context note");
       }
+      // A range is all or nothing, and an excerpt must say which lines it quotes:
+      // text without a range would be source Pi cannot locate. A pointer may omit
+      // the range entirely, which means the whole file.
+      const ranged = item.start_line !== undefined || item.end_line !== undefined;
+      if (ranged || item.text !== undefined) {
+        if (
+          !Number.isInteger(item.start_line) ||
+          !Number.isInteger(item.end_line) ||
+          (item.start_line as number) < 1 ||
+          (item.end_line as number) < (item.start_line as number)
+        ) {
+          throw new Error("invalid context lines");
+        }
+      }
       if (
-        !Number.isInteger(item.start_line) ||
-        !Number.isInteger(item.end_line) ||
-        (item.start_line as number) < 1 ||
-        (item.end_line as number) < (item.start_line as number)
+        item.cursor_line !== undefined &&
+        (!Number.isInteger(item.cursor_line) || (item.cursor_line as number) < 1)
       ) {
-        throw new Error("invalid context lines");
+        throw new Error("invalid context cursor line");
       }
       return {
-        text: item.text,
+        text: item.text as string | undefined,
         note: item.note as string | undefined,
         path: item.path,
-        start_line: item.start_line as number,
-        end_line: item.end_line as number,
-        kind: item.kind,
+        start_line: item.start_line as number | undefined,
+        end_line: item.end_line as number | undefined,
+        cursor_line: item.cursor_line as number | undefined,
+        kind: item.kind as string | undefined,
       };
     });
-    return { note: value.note, contexts };
+    return { note: value.note, root: value.root, contexts };
   } catch {
     return undefined;
   }
@@ -281,23 +301,37 @@ function inlineCode(text: string): string {
 
 export function formatContextEnvelope(text: string): string | undefined {
   const envelope = parseContextEnvelope(text);
-  if (!envelope || envelope.contexts.length === 0) return undefined;
+  if (!envelope) return undefined;
+  // An envelope with no contexts is an instruction the editor had no file to
+  // attach. It still arrives as JSON so that Pi does not read a leading "/" as
+  // a slash command, so it has to be unwrapped here rather than passed through.
+  if (envelope.contexts.length === 0) return envelope.note;
 
   const sections = envelope.contexts.map((context, index) => {
-    const fence = fenceFor(context.text);
-    return [
-      `### Context ${index + 1}`,
-      "",
-      `- **File path:** ${inlineCode(context.path)}`,
-      `- **Kind:** ${inlineCode(context.kind)}`,
-      `- **Start line:** ${context.start_line}`,
-      `- **End line:** ${context.end_line}`,
-      "",
-      `${fence}${languageForPath(context.path)}`,
-      context.text,
-      fence,
-      blockquote(context.note ?? ""),
-    ].join("\n");
+    // An excerpt quotes its source inline, so the relative path is a label. A
+    // pointer's path is the only way to reach the file, and Pi's working
+    // directory is not necessarily the project root it was matched on, so that
+    // path has to be absolute.
+    const path =
+      context.text === undefined && envelope.root
+        ? `${envelope.root}/${context.path}`
+        : context.path;
+    const lines = [`### Context ${index + 1}`, "", `- **File path:** ${inlineCode(path)}`];
+    if (context.kind !== undefined) lines.push(`- **Kind:** ${inlineCode(context.kind)}`);
+    if (context.start_line !== undefined) {
+      lines.push(`- **Start line:** ${context.start_line}`, `- **End line:** ${context.end_line}`);
+    }
+    if (context.cursor_line !== undefined) {
+      lines.push(`- **Cursor line:** ${context.cursor_line}`);
+    }
+    // A pointer stops here: the path and the location are the whole context, and
+    // Pi reads the file if it needs what is in it.
+    if (context.text !== undefined) {
+      const fence = fenceFor(context.text);
+      lines.push("", `${fence}${languageForPath(context.path)}`, context.text, fence);
+    }
+    if (context.note) lines.push(blockquote(context.note));
+    return lines.join("\n");
   });
   return `${sections.join("\n---\n")}\n---\n${envelope.note}`;
 }
