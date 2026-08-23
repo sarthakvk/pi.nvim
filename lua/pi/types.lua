@@ -152,6 +152,21 @@
 ---@field bufnr integer
 ---@field kind? "whole_file" Set by pi.context.file; absent for a plain range.
 
+-- Where the user is, with nothing quoted: what :PiSend sends so Pi can read the
+-- file itself. Either `start_line`/`end_line` (a selection) or `cursor_line` is
+-- set, or neither when the location is the file as a whole. `modified` and
+-- `exists` describe the buffer at capture time so the caller can warn that Pi
+-- will read something else; they are not sent to Pi.
+---@class pi.Pointer
+---@field root string
+---@field path string Absolute.
+---@field relative_path string Project-relative, what Pi sees.
+---@field start_line? integer One-based, inclusive.
+---@field end_line? integer One-based, inclusive.
+---@field cursor_line? integer One-based.
+---@field modified boolean The buffer has unsaved changes, so disk is behind it.
+---@field exists boolean The path is on disk, so there is something for Pi to read.
+
 -- One entry in a project's context draft. Anchored with extmarks so the range
 -- follows edits, and re-read from disk at send time rather than trusting
 -- `snapshot`.
@@ -170,14 +185,18 @@
 ---@field end_mark integer
 
 -- wire: one element of `contexts` in the JSON envelope, read by
--- parseContextEnvelope in protocol.ts.
+-- parseContextEnvelope in protocol.ts. Two shapes share it: an excerpt from the
+-- draft, which sets `kind`, the range, and `text`; and a pointer from :PiSend,
+-- which sets only `path` and the location it knows. Absent fields are omitted
+-- from the JSON rather than sent as null.
 ---@class pi.BundleContext
 ---@field id string
----@field kind string
+---@field kind? string Excerpts only.
 ---@field path string Project-relative.
----@field start_line integer
----@field end_line integer
----@field text string
+---@field start_line? integer Required alongside `text`.
+---@field end_line? integer
+---@field cursor_line? integer Pointers only, and only without a range.
+---@field text? string Absent on a pointer: Pi reads the file instead.
 ---@field note string
 
 -- wire: the whole envelope pi.draft sends as one user message.

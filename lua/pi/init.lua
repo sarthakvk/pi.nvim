@@ -42,8 +42,15 @@ local function current_root()
 	if type(stored) == "string" and stored ~= "" then
 		return stored
 	end
+	-- Only a normal buffer sitting in a real directory says anything about where
+	-- the user is. A plugin's buffer name (`oil://…`) or a :help page's runtime
+	-- path would otherwise become a project root of its own, and every request
+	-- made from one would go looking for a Pi that cannot exist there.
 	local name = vim.api.nvim_buf_get_name(0)
-	return project.root(name ~= "" and name or vim.fn.getcwd())
+	local named = name ~= ""
+		and vim.bo.buftype == ""
+		and vim.fn.isdirectory(vim.fn.fnamemodify(name, ":h")) == 1
+	return project.root(named and name or vim.fn.getcwd())
 end
 
 -- Pi edits the working tree directly, so buffers can go out of date. Reloading
@@ -155,23 +162,27 @@ local function ensure_target(root, callback)
 	end)
 end
 
--- Sends a bundle to whichever Pi ensure_target resolves, asking how to deliver
--- it when Pi is mid-turn.
+-- Sends one already-encoded message to whichever Pi ensure_target resolves,
+-- asking how to deliver it when Pi is mid-turn. Encoding belongs to the caller,
+-- which knows whether it is sending a draft bundle, a pointer, or an instruction
+-- with no context at all; all three reach Pi through this one policy.
 ---@param root string
----@param request pi.BundleRequest
----@param on_sent fun() Runs only once Pi has accepted the bundle.
-local function deliver(root, request, on_sent)
+---@param message string A context envelope from pi.draft.
+---@param on_sent fun()? Runs only once Pi has accepted the message.
+local function deliver(root, message, on_sent)
 	ensure_target(root, function(target, err)
 		if not target then
 			return ui.notify(err, vim.log.levels.WARN)
 		end
 		local function send(delivery)
-			target.transport:send(draft.envelope(request), delivery, function(_, send_err)
+			target.transport:send(message, delivery, function(_, send_err)
 				if send_err then
 					return ui.notify("Pi did not accept context: " .. send_err, vim.log.levels.ERROR)
 				end
-				on_sent()
-				ui.notify("Context sent to Pi")
+				if on_sent then
+					on_sent()
+				end
+				ui.notify("Sent to Pi")
 			end)
 		end
 		-- Interrupting a working Pi is the user's call, not ours: an idle target (or
@@ -294,46 +305,73 @@ function M.context_send()
 		end
 		-- The draft is only emptied once Pi has accepted the bundle, so a rejected
 		-- send leaves the user's collection intact.
-		deliver(root, request, function()
+		deliver(root, draft.envelope(request), function()
 			draft.clear(root)
 		end)
 	end)
 end
 
--- :PiSend — a one-shot bundle built from the current file or range that never
--- touches the draft, for when collecting context first would be ceremony.
+-- :PiSend — a one-shot send that tells Pi where the user is instead of quoting
+-- what is there. The pointer carries no source, so Pi reads the file itself,
+-- and that is what lets this work everywhere an excerpt cannot: an empty file,
+-- one that has never been written, one with unsaved changes, or no file at all,
+-- which sends the instruction on its own.
 ---@param opts vim.api.keyset.create_user_command.command_args
 function M.send_current(opts)
+	local ranged = opts and opts.range and opts.range > 0
+	-- Resolved before the prompt: vim.ui.input can move the cursor, and the
+	-- selection is gone by the time the user has finished typing.
+	local pointer, reason = context.pointer(
+		vim.api.nvim_get_current_buf(),
+		ranged and opts.line1 or nil,
+		ranged and opts.line2 or nil
+	)
+	local root = pointer and pointer.root or current_root()
 	ui.input("Instruction for Pi: ", function(note)
 		if note == nil then
 			return
 		end
-		local captured, err = capture(opts)
-		if not captured then
-			return ui.notify("Cannot send Pi context: " .. err, vim.log.levels.WARN)
+		if not pointer then
+			-- With no file there is nothing to point at and the instruction is the
+			-- whole message. It still travels as an envelope with no contexts rather
+			-- than as bare text, because Pi reads a prompt beginning with "/" as a
+			-- slash command and would run it instead of answering it.
+			if note == "" then
+				return ui.notify("Nothing to send: " .. reason, vim.log.levels.WARN)
+			end
+			ui.notify("Sending without a file: " .. reason, vim.log.levels.WARN)
+			return deliver(root, draft.envelope({ id = draft.new_id(), root = root, note = note, contexts = {} }))
 		end
-		-- Ids come from pi.draft even though this bundle never enters one: Pi
+		-- Pi resolves the pointer by reading the file, so anything that makes disk
+		-- and buffer disagree is worth saying out loud rather than letting Pi
+		-- silently answer about source the user is not looking at. A file that is
+		-- not there yet is reported ahead of the unsaved changes that are the reason
+		-- it is not there, because it is the more specific problem: Pi will find
+		-- nothing at all to read.
+		if not pointer.exists then
+			ui.notify(pointer.relative_path .. " is not on disk yet; Pi cannot read it", vim.log.levels.WARN)
+		elseif pointer.modified then
+			ui.notify("Buffer has unsaved changes; Pi will read the saved file", vim.log.levels.WARN)
+		end
+		-- Ids come from pi.draft even though this send never enters one: Pi
 		-- addresses findings by these ids, so the two below must differ from each
 		-- other and from every id another send produces.
-		local item = {
-			id = draft.new_id(),
-			kind = captured.kind or "range",
-			path = captured.relative_path,
-			start_line = captured.start_line,
-			end_line = captured.end_line,
-			text = captured.text,
-			note = opts.args or "",
-		}
 		local request = {
 			id = draft.new_id(),
-			root = captured.root,
+			root = pointer.root,
 			note = note,
-			contexts = { item },
+			contexts = {
+				{
+					id = draft.new_id(),
+					path = pointer.relative_path,
+					start_line = pointer.start_line,
+					end_line = pointer.end_line,
+					cursor_line = pointer.cursor_line,
+					note = opts and opts.args or "",
+				},
+			},
 		}
-		if #vim.json.encode(request) > M.config.max_context_bytes then
-			return ui.notify("Context exceeds configured size limit", vim.log.levels.WARN)
-		end
-		deliver(captured.root, request, function() end)
+		deliver(root, draft.envelope(request))
 	end)
 end
 
