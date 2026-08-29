@@ -45,7 +45,7 @@ session.start_headless(root, pi.config, function(target, err)
 		return
 	end
 	target.transport:send(
-		[[This is a bridge end-to-end test. Use the write or edit tool to change sample.js so its complete content is exactly `const answer = 43;` followed by a newline. Then call nvim_publish_findings once with a hint finding for sample.js lines 1-1, request_id "e2e", title "Changed answer", message "The test edit completed", and expected_text exactly `const answer = 43;`. Finally reply with exactly: pi-nvim-e2e-ok]],
+		[[This is a bridge end-to-end test. Use the write or edit tool to change sample.js so its complete content is exactly `const answer = 43;` followed by a newline. Then call nvim_publish_findings once with a hint finding for sample.js lines 1-1 and diagnostic "The test edit completed". Finally reply with exactly: pi-nvim-e2e-ok]],
 		nil,
 		function(_, send_err)
 			failure = send_err

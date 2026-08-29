@@ -31,12 +31,13 @@ import { join } from "node:path";
 import {
   VERSION,
   canonicalRoot,
+  createFinding,
   descriptorName,
   formatContextEnvelope,
+  identifier,
   inside,
   parseJson,
   type Finding,
-  validateFinding,
 } from "./protocol";
 
 // Pi may load this file more than once (as an installed package and via
@@ -513,16 +514,14 @@ export default function (pi: ExtensionAPI): void {
     name: "nvim_publish_findings",
     label: "Publish Neovim Findings",
     description:
-      "Publish editor-only review findings for saved project source. This never edits source files.",
-    promptSnippet: "Publish review findings as Neovim annotations",
+      "Publish editor-only code diagnostics for saved project source. The extension anchors them to the current source and never edits files.",
+    promptSnippet: "Publish code diagnostics as Neovim annotations",
     promptGuidelines: [
-      "Use nvim_publish_findings to return concrete code-review findings for context supplied from Neovim; include exact current source text in expected_text.",
+      "Whenever you identify a code-related finding or review comment for context supplied from Neovim, publish it with nvim_publish_findings. Provide its project-relative path, inclusive line range, severity, and diagnostic message. Also report every published diagnostic in your chat response; publishing does not replace reporting it to the user.",
     ],
     parameters: Type.Object({
       findings: Type.Array(
         Type.Object({
-          request_id: Type.String(),
-          context_item_id: Type.Optional(Type.String()),
           path: Type.String(),
           start_line: Type.Integer(),
           end_line: Type.Integer(),
@@ -532,19 +531,19 @@ export default function (pi: ExtensionAPI): void {
             "information",
             "hint",
           ] as const),
-          title: Type.String(),
-          message: Type.String(),
-          expected_text: Type.String(),
+          diagnostic: Type.String(),
         }),
       ),
     }),
     async execute(_id, params, _signal, _update, ctx) {
       if (!runtime) throw new Error("Neovim bridge runtime is unavailable");
-      // Validate the whole batch before publishing any of it, so a bad finding
-      // fails the call outright instead of leaving a half-applied set in the
-      // editor.
+      // Validate and enrich the whole batch before publishing any of it, so a
+      // bad finding fails the call outright instead of leaving a half-applied
+      // set in the editor. One generated request id groups this tool call's
+      // findings without asking the model to manufacture transport metadata.
+      const requestId = identifier();
       const published = params.findings.map((finding) =>
-        validateFinding(runtime!.root, finding),
+        createFinding(runtime!.root, requestId, finding),
       );
       for (const finding of published)
         if (!expectedTextMatches(runtime.root, finding))

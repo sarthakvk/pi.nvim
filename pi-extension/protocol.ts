@@ -16,6 +16,18 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 // handshake rather than half-speaking an older dialect.
 export const VERSION = 1;
 
+export type FindingSeverity = "error" | "warning" | "information" | "hint";
+
+// The model supplies only the judgment. createFinding adds the source anchor
+// and transport metadata that the extension can determine more reliably.
+export type FindingInput = {
+  path: string;
+  start_line: number;
+  end_line: number;
+  severity: FindingSeverity;
+  diagnostic: string;
+};
+
 export type Finding = {
   id: string;
   request_id: string;
@@ -23,7 +35,7 @@ export type Finding = {
   path: string;
   start_line: number;
   end_line: number;
-  severity: "error" | "warning" | "information" | "hint";
+  severity: FindingSeverity;
   title: string;
   message: string;
   expected_text: string;
@@ -78,11 +90,13 @@ export function canonicalRoot(cwd: string): string {
   }
 }
 
-// Findings come from a model, so nothing about them is trusted. Beyond shape and
-// range checks, the claimed expected_text is compared against the file on disk:
-// an annotation whose anchor text does not exist would land on unrelated lines,
-// so it is rejected at the source instead of being shown as stale in the editor.
-export function validateFinding(root: string, value: unknown): Finding {
+// Findings come from a model, so nothing about them is trusted. The extension
+// validates the model's small input and reads the source anchor itself.
+export function createFinding(
+  root: string,
+  requestId: string,
+  value: unknown,
+): Finding {
   if (!value || typeof value !== "object")
     throw new Error("finding must be an object");
   const input = value as Record<string, unknown>;
@@ -99,42 +113,30 @@ export function validateFinding(root: string, value: unknown): Finding {
     throw new Error("finding lines must be a valid one-based inclusive range");
   if (!["error", "warning", "information", "hint"].includes(String(severity)))
     throw new Error("invalid finding severity");
-  for (const key of [
-    "request_id",
-    "title",
-    "message",
-    "expected_text",
-  ] as const)
-    if (typeof input[key] !== "string" || input[key] === "")
-      throw new Error(`finding ${key} must be a non-empty string`);
+  if (typeof input.diagnostic !== "string" || input.diagnostic === "")
+    throw new Error("finding diagnostic must be a non-empty string");
+
+  const startLine = input.start_line as number;
+  const endLine = input.end_line as number;
   const sourceLines = readFileSync(join(root, path), "utf8").split("\n");
   // A trailing newline splits into a phantom empty last line; dropping it keeps
   // indices in step with the line numbers the editor reports.
   if (sourceLines.at(-1) === "") sourceLines.pop();
-  if ((input.end_line as number) > sourceLines.length)
+  if (endLine > sourceLines.length)
     throw new Error("finding range exceeds file length");
-  if (
-    sourceLines
-      .slice((input.start_line as number) - 1, input.end_line as number)
-      .join("\n") !== input.expected_text
-  )
-    throw new Error("finding expected_text does not match its range");
+
   return {
-    id:
-      typeof input.id === "string" && input.id !== "" ? input.id : identifier(),
-    request_id: input.request_id as string,
-    // Spread rather than assigning undefined, so an absent id stays absent in
-    // the JSON that crosses to Neovim instead of becoming an explicit null.
-    ...(typeof input.context_item_id === "string" && {
-      context_item_id: input.context_item_id,
-    }),
+    id: identifier(),
+    request_id: requestId,
     path,
-    start_line: input.start_line as number,
-    end_line: input.end_line as number,
-    severity: severity as Finding["severity"],
-    title: input.title as string,
-    message: input.message as string,
-    expected_text: input.expected_text as string,
+    start_line: startLine,
+    end_line: endLine,
+    severity: severity as FindingSeverity,
+    // The wire shape predates the smaller tool input. Keep its title/message
+    // split internal so existing Neovim clients continue to render findings.
+    title: "Pi finding",
+    message: input.diagnostic,
+    expected_text: sourceLines.slice(startLine - 1, endLine).join("\n"),
   };
 }
 

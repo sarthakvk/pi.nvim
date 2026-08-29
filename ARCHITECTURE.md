@@ -236,8 +236,9 @@ socket is claimed process-wide — see below.
   on its own (`ensure_target` re-discovers once the transport closes), so it
   picks up the replacement session's id rather than keeping a stale one.
 - `nvim_publish_findings` tool (`pi.registerTool`) — Pi's only way to return
-  annotations. The whole batch is validated before any of it is published, and each
-  finding's `expected_text` must match disk.
+  annotations. The model supplies each finding's path, range, severity, and
+  diagnostic; the extension validates the whole batch and reads `expected_text`
+  from disk before publishing any of it.
 - Socket server (`serveClient`) — `hello` (version + root guard), `send` (refuses a
   plain send into a busy Pi; requires `steer`/`followUp`), `clear_findings`.
 - Events pushed to clients: `activity` on `agent_start`/`agent_settled`,
@@ -251,7 +252,7 @@ socket is claimed process-wide — see below.
 
 `protocol.ts` is pure and testable: `VERSION`, the `Finding` type, `inside`
 (realpath-based containment), `canonicalRoot` (must agree with `pi.project.root`),
-`validateFinding`, `descriptorName`, `parseJson`.
+`createFinding`, `descriptorName`, `parseJson`.
 
 ## Data shapes
 
