@@ -14,7 +14,9 @@ const envelope = (contexts, note = "have a look") =>
 
 test("a pointer names the location and carries no source", () => {
   const formatted = formatContextEnvelope(
-    envelope([{ id: "item", path: "lua/pi/init.lua", cursor_line: 312, note: "" }]),
+    envelope([
+      { id: "item", path: "lua/pi/init.lua", cursor_line: 312, note: "" },
+    ]),
   );
   // The path is absolute: Pi's working directory can be any subdirectory of the
   // project root it was matched on, and a pointer is unreadable if it resolves
@@ -39,13 +41,22 @@ test("an instruction with no context is unwrapped, not passed through as JSON", 
   // The editor sends this shape when there was no file to point at. It travels
   // as JSON so Pi cannot mistake a leading "/" for a slash command, which means
   // the model must never be shown the JSON itself.
-  assert.equal(formatContextEnvelope(envelope([], "/clear the stale caches")), "/clear the stale caches");
+  assert.equal(
+    formatContextEnvelope(envelope([], "/clear the stale caches")),
+    "/clear the stale caches",
+  );
 });
 
 test("a selection points at the range instead of the cursor", () => {
   const formatted = formatContextEnvelope(
     envelope([
-      { id: "item", path: "lua/pi/init.lua", start_line: 40, end_line: 58, note: "" },
+      {
+        id: "item",
+        path: "lua/pi/init.lua",
+        start_line: 40,
+        end_line: 58,
+        note: "",
+      },
     ]),
   );
   assert.ok(formatted.includes("- **File path:** `/project/lua/pi/init.lua`"));
@@ -60,7 +71,13 @@ test("a file with no location at all is still a usable pointer", () => {
   );
   assert.equal(
     formatted,
-    ["### Context 1", "", "- **File path:** `/project/empty.txt`", "---", "have a look"].join("\n"),
+    [
+      "### Context 1",
+      "",
+      "- **File path:** `/project/empty.txt`",
+      "---",
+      "have a look",
+    ].join("\n"),
   );
 });
 

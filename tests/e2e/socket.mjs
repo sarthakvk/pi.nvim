@@ -100,7 +100,10 @@ try {
       .flatMap((name) => {
         try {
           return [
-            { name, value: JSON.parse(readFileSync(join(runtime, name), "utf8")) },
+            {
+              name,
+              value: JSON.parse(readFileSync(join(runtime, name), "utf8")),
+            },
           ];
         } catch {
           return [];

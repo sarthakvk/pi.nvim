@@ -150,16 +150,16 @@ require("pi").setup({
 })
 ```
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `fallback` | `"ask"` | Behavior when no terminal Pi is available: `"ask"`, `"headless"`, or `"none"` |
-| `resume_headless` | `true` | Resume the last persisted headless session for the project |
-| `max_context_bytes` | `256 * 1024` | Reject complete context bundles larger than this limit |
-| `pi_executable` | `"pi"` | Pi executable name or path |
-| `extension_path` | bundled extension | Override the companion extension used by headless Pi |
-| `diagnostics` | signs and underlines | Options passed to `vim.diagnostic.config` for Pi findings |
-| `keymaps` | `<leader>p` mappings | Mapping prefix and action suffixes; use `false` to disable all mappings |
-| `which_key` | Pi group and icon | WhichKey metadata; use `false` to disable the integration |
+| Option              | Default              | Description                                                                   |
+| ------------------- | -------------------- | ----------------------------------------------------------------------------- |
+| `fallback`          | `"ask"`              | Behavior when no terminal Pi is available: `"ask"`, `"headless"`, or `"none"` |
+| `resume_headless`   | `true`               | Resume the last persisted headless session for the project                    |
+| `max_context_bytes` | `256 * 1024`         | Reject complete context bundles larger than this limit                        |
+| `pi_executable`     | `"pi"`               | Pi executable name or path                                                    |
+| `extension_path`    | bundled extension    | Override the companion extension used by headless Pi                          |
+| `diagnostics`       | signs and underlines | Options passed to `vim.diagnostic.config` for Pi findings                     |
+| `keymaps`           | `<leader>p` mappings | Mapping prefix and action suffixes; use `false` to disable all mappings       |
+| `which_key`         | Pi group and icon    | WhichKey metadata; use `false` to disable the integration                     |
 
 Pi is never started when Neovim launches. A worker starts only after an
 explicit send, subject to `fallback`.
@@ -168,24 +168,24 @@ explicit send, subject to `fallback`.
 
 The default mappings keep all Pi actions under `<leader>p`:
 
-| Mapping | Modes | Action |
-| --- | --- | --- |
-| `<leader>pa` | Normal, Visual | Add the current file or selection to the context draft |
+| Mapping      | Modes          | Action                                                        |
+| ------------ | -------------- | ------------------------------------------------------------- |
+| `<leader>pa` | Normal, Visual | Add the current file or selection to the context draft        |
 | `<leader>ps` | Normal, Visual | Send an instruction pointing at the current file or selection |
-| `<leader>pS` | Normal | Send the context draft |
-| `<leader>pv` | Normal | View the context draft |
-| `<leader>pd` | Normal | Delete the context item under the cursor |
-| `<leader>pr` | Normal | Refresh the context item under the cursor |
-| `<leader>pm` | Normal | Move the context item under the cursor |
-| `<leader>pc` | Normal | Clear the context draft |
-| `<leader>pA` | Normal | Attach a Pi session |
-| `<leader>pl` | Normal | List Pi sessions |
-| `<leader>pf` | Normal | Show findings |
-| `<leader>pR` | Normal | Reply to the finding under the cursor |
-| `<leader>pC` | Normal | Clear findings |
-| `<leader>po` | Normal | Open the latest headless response |
-| `<leader>pi` | Normal | Inspect status |
-| `<leader>pq` | Normal | Stop the headless worker |
+| `<leader>pS` | Normal         | Send the context draft                                        |
+| `<leader>pv` | Normal         | View the context draft                                        |
+| `<leader>pd` | Normal         | Delete the context item under the cursor                      |
+| `<leader>pr` | Normal         | Refresh the context item under the cursor                     |
+| `<leader>pm` | Normal         | Move the context item under the cursor                        |
+| `<leader>pc` | Normal         | Clear the context draft                                       |
+| `<leader>pA` | Normal         | Attach a Pi session                                           |
+| `<leader>pl` | Normal         | List Pi sessions                                              |
+| `<leader>pf` | Normal         | Show findings                                                 |
+| `<leader>pR` | Normal         | Reply to the finding under the cursor                         |
+| `<leader>pC` | Normal         | Clear findings                                                |
+| `<leader>po` | Normal         | Open the latest headless response                             |
+| `<leader>pi` | Normal         | Inspect status                                                |
+| `<leader>pq` | Normal         | Stop the headless worker                                      |
 
 Change the prefix or any action suffix in `setup()`. Set an action to `false`
 to leave it unmapped:
@@ -207,24 +207,24 @@ consistent icon automatically; set `which_key = false` to opt out.
 
 ## Commands
 
-| Command | Description |
-| --- | --- |
-| `:[range]PiSend [note]` | Send an instruction that points Pi at the current file or range |
+| Command                       | Description                                                       |
+| ----------------------------- | ----------------------------------------------------------------- |
+| `:[range]PiSend [note]`       | Send an instruction that points Pi at the current file or range   |
 | `:[range]PiContextAdd [note]` | Add the current saved file or range, quoted, to the project draft |
-| `:PiContextShow` | Open the current project's draft |
-| `:PiContextRemove` | Remove the draft item under the cursor |
-| `:PiContextRefresh` | Re-read the draft item under the cursor from disk |
-| `:PiContextMove {position}` | Move the draft item under the cursor |
-| `:PiContextClear` | Clear the current project's draft |
-| `:PiContextSend` | Send the draft with an overall instruction |
-| `:PiAttach` | Choose and attach an opted-in terminal session |
-| `:PiSessions` | List attached and discoverable sessions |
-| `:PiFindings` | List findings for the current project |
-| `:PiReply` | Reply to the finding under the cursor |
-| `:PiClear` | Clear the finding under the cursor, or all findings |
-| `:PiResponse` | Open the latest headless Pi response |
-| `:PiStatus` | Show the bridge mode, activity, and session ID |
-| `:PiStop` | Stop the current headless worker |
+| `:PiContextShow`              | Open the current project's draft                                  |
+| `:PiContextRemove`            | Remove the draft item under the cursor                            |
+| `:PiContextRefresh`           | Re-read the draft item under the cursor from disk                 |
+| `:PiContextMove {position}`   | Move the draft item under the cursor                              |
+| `:PiContextClear`             | Clear the current project's draft                                 |
+| `:PiContextSend`              | Send the draft with an overall instruction                        |
+| `:PiAttach`                   | Choose and attach an opted-in terminal session                    |
+| `:PiSessions`                 | List attached and discoverable sessions                           |
+| `:PiFindings`                 | List findings for the current project                             |
+| `:PiReply`                    | Reply to the finding under the cursor                             |
+| `:PiClear`                    | Clear the finding under the cursor, or all findings               |
+| `:PiResponse`                 | Open the latest headless Pi response                              |
+| `:PiStatus`                   | Show the bridge mode, activity, and session ID                    |
+| `:PiStop`                     | Stop the current headless worker                                  |
 
 When Pi is already working, pi.nvim asks whether the new request should steer
 the current turn or wait as a follow-up.
