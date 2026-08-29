@@ -26,8 +26,7 @@ test("a pointer names the location and carries no source", () => {
     [
       "### Context 1",
       "",
-      "- **File path:** `/project/lua/pi/init.lua`",
-      "- **Cursor line:** 312",
+      "- **File:** @/project/lua/pi/init.lua:312",
       "---",
       "have a look",
     ].join("\n"),
@@ -59,9 +58,7 @@ test("a selection points at the range instead of the cursor", () => {
       },
     ]),
   );
-  assert.ok(formatted.includes("- **File path:** `/project/lua/pi/init.lua`"));
-  assert.ok(formatted.includes("- **Start line:** 40"));
-  assert.ok(formatted.includes("- **End line:** 58"));
+  assert.ok(formatted.includes("- **File:** @/project/lua/pi/init.lua:40-58"));
   assert.ok(!formatted.includes("Cursor line"));
 });
 
@@ -74,7 +71,7 @@ test("a file with no location at all is still a usable pointer", () => {
     [
       "### Context 1",
       "",
-      "- **File path:** `/project/empty.txt`",
+      "- **File:** @/project/empty.txt",
       "---",
       "have a look",
     ].join("\n"),
@@ -100,10 +97,8 @@ test("draft excerpts keep quoting their source", () => {
     [
       "### Context 1",
       "",
-      "- **File path:** `lua/pi/init.lua`",
+      "- **File:** @lua/pi/init.lua:1-1",
       "- **Kind:** `range`",
-      "- **Start line:** 1",
-      "- **End line:** 1",
       "",
       "```lua",
       "local M = {}",

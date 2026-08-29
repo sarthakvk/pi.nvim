@@ -318,11 +318,14 @@ function constructFilePath(
   filepath: string,
   start_line: number | undefined,
   end_line: number | undefined,
+  cursor_line: number | undefined,
 ): string {
-  const line: string[] = [];
-  line.push(start_line !== undefined ? String(start_line) : "");
-  line.push(end_line !== undefined ? String(end_line) : "");
-  return `@${filepath}:${line.join("-")}`;
+  const start = start_line ?? cursor_line;
+  if (start === undefined) return `@${filepath}`;
+
+  return end_line !== undefined
+    ? `@${filepath}:${start}-${end_line}`
+    : `@${filepath}:${start}`;
 }
 
 export function formatContextEnvelope(text: string): string | undefined {
@@ -346,13 +349,11 @@ export function formatContextEnvelope(text: string): string | undefined {
       path,
       context.start_line,
       context.end_line,
+      context.cursor_line,
     );
     const lines = [`### Context ${index + 1}`, "", `- **File:** ${filepath}`];
     if (context.kind !== undefined)
       lines.push(`- **Kind:** ${inlineCode(context.kind)}`);
-    if (context.cursor_line !== undefined) {
-      lines.push(`- **Cursor line:** ${context.cursor_line}`);
-    }
     // A pointer stops here: the path and the location are the whole context, and
     // Pi reads the file if it needs what is in it.
     if (context.text !== undefined) {

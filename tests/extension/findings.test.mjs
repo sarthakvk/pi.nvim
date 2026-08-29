@@ -8,7 +8,10 @@ import { createFinding } from "../../pi-extension/protocol.ts";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "pi-nvim-findings-"));
-  writeFileSync(join(root, "sample.ts"), "const first = 1;\nconst second = 2;\n");
+  writeFileSync(
+    join(root, "sample.ts"),
+    "const first = 1;\nconst second = 2;\n",
+  );
   return root;
 }
 
