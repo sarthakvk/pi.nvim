@@ -188,9 +188,11 @@ function parseContextEnvelope(text: string): ContextEnvelope | undefined {
       return undefined;
     }
     if (typeof value.note !== "string") return undefined;
-    if (value.root !== undefined && typeof value.root !== "string") return undefined;
+    if (value.root !== undefined && typeof value.root !== "string")
+      return undefined;
     const contexts = value.contexts.map((context: unknown) => {
-      if (!context || typeof context !== "object") throw new Error("invalid context");
+      if (!context || typeof context !== "object")
+        throw new Error("invalid context");
       const item = context as Record<string, unknown>;
       if (typeof item.path !== "string" || item.path === "") {
         throw new Error("invalid context metadata");
@@ -198,7 +200,10 @@ function parseContextEnvelope(text: string): ContextEnvelope | undefined {
       if (item.text !== undefined && typeof item.text !== "string") {
         throw new Error("invalid context text");
       }
-      if (item.kind !== undefined && (typeof item.kind !== "string" || item.kind === "")) {
+      if (
+        item.kind !== undefined &&
+        (typeof item.kind !== "string" || item.kind === "")
+      ) {
         throw new Error("invalid context kind");
       }
       if (item.note !== undefined && typeof item.note !== "string") {
@@ -207,7 +212,8 @@ function parseContextEnvelope(text: string): ContextEnvelope | undefined {
       // A range is all or nothing, and an excerpt must say which lines it quotes:
       // text without a range would be source Pi cannot locate. A pointer may omit
       // the range entirely, which means the whole file.
-      const ranged = item.start_line !== undefined || item.end_line !== undefined;
+      const ranged =
+        item.start_line !== undefined || item.end_line !== undefined;
       if (ranged || item.text !== undefined) {
         if (
           !Number.isInteger(item.start_line) ||
@@ -220,7 +226,8 @@ function parseContextEnvelope(text: string): ContextEnvelope | undefined {
       }
       if (
         item.cursor_line !== undefined &&
-        (!Number.isInteger(item.cursor_line) || (item.cursor_line as number) < 1)
+        (!Number.isInteger(item.cursor_line) ||
+          (item.cursor_line as number) < 1)
       ) {
         throw new Error("invalid context cursor line");
       }
@@ -249,7 +256,10 @@ function blockquote(text: string): string {
 
 function fenceFor(text: string): string {
   const runs = text.match(/`+/g) ?? [];
-  const longestRun = runs.reduce((longest, run) => Math.max(longest, run.length), 0);
+  const longestRun = runs.reduce(
+    (longest, run) => Math.max(longest, run.length),
+    0,
+  );
   // Triple backticks are the normal format. Use a longer fence only when the
   // source itself contains a backtick run that would close a Markdown block.
   return "`".repeat(Math.max(3, longestRun + 1));
@@ -294,9 +304,23 @@ function languageForPath(path: string): string {
 
 function inlineCode(text: string): string {
   const runs = text.match(/`+/g) ?? [];
-  const longestRun = runs.reduce((longest, run) => Math.max(longest, run.length), 0);
+  const longestRun = runs.reduce(
+    (longest, run) => Math.max(longest, run.length),
+    0,
+  );
   const fence = "`".repeat(longestRun + 1);
   return `${fence}${text}${fence}`;
+}
+
+function constructFilePath(
+  filepath: string,
+  start_line: number | undefined,
+  end_line: number | undefined,
+): string {
+  const line: string[] = [];
+  line.push(start_line !== undefined ? String(start_line) : "");
+  line.push(end_line !== undefined ? String(end_line) : "");
+  return `@${filepath}:${line.join("-")}`;
 }
 
 export function formatContextEnvelope(text: string): string | undefined {
@@ -316,11 +340,14 @@ export function formatContextEnvelope(text: string): string | undefined {
       context.text === undefined && envelope.root
         ? `${envelope.root}/${context.path}`
         : context.path;
-    const lines = [`### Context ${index + 1}`, "", `- **File path:** ${inlineCode(path)}`];
-    if (context.kind !== undefined) lines.push(`- **Kind:** ${inlineCode(context.kind)}`);
-    if (context.start_line !== undefined) {
-      lines.push(`- **Start line:** ${context.start_line}`, `- **End line:** ${context.end_line}`);
-    }
+    const filepath = constructFilePath(
+      path,
+      context.start_line,
+      context.end_line,
+    );
+    const lines = [`### Context ${index + 1}`, "", `- **File:** ${filepath}`];
+    if (context.kind !== undefined)
+      lines.push(`- **Kind:** ${inlineCode(context.kind)}`);
     if (context.cursor_line !== undefined) {
       lines.push(`- **Cursor line:** ${context.cursor_line}`);
     }
@@ -328,7 +355,12 @@ export function formatContextEnvelope(text: string): string | undefined {
     // Pi reads the file if it needs what is in it.
     if (context.text !== undefined) {
       const fence = fenceFor(context.text);
-      lines.push("", `${fence}${languageForPath(context.path)}`, context.text, fence);
+      lines.push(
+        "",
+        `${fence}${languageForPath(context.path)}`,
+        context.text,
+        fence,
+      );
     }
     if (context.note) lines.push(blockquote(context.note));
     return lines.join("\n");

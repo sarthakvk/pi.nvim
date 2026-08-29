@@ -45,13 +45,13 @@ pi-extension/protocol.ts shared wire version, Finding type, path validation
 
 ## The two paths to Pi
 
-| | interactive | headless |
-|---|---|---|
-| Process | user's Pi terminal, opted in via `/nvim-bridge` | `pi --mode rpc` spawned by the plugin |
-| Transport | `transport/socket.lua` ↔ unix socket in `$XDG_RUNTIME_DIR/pi.nvim` | `transport/rpc.lua` ↔ stdio NDJSON |
-| Discovery | descriptor JSON files, matched on `root` | none; started on demand |
-| Lifetime | user's; left running | plugin's; killed on `VimLeavePre` |
-| Clear findings | `clear_findings` request | `/nvim-bridge clear` slash command |
+|                | interactive                                                        | headless                              |
+| -------------- | ------------------------------------------------------------------ | ------------------------------------- |
+| Process        | user's Pi terminal, opted in via `/nvim-bridge`                    | `pi --mode rpc` spawned by the plugin |
+| Transport      | `transport/socket.lua` ↔ unix socket in `$XDG_RUNTIME_DIR/pi.nvim` | `transport/rpc.lua` ↔ stdio NDJSON    |
+| Discovery      | descriptor JSON files, matched on `root`                           | none; started on demand               |
+| Lifetime       | user's; left running                                               | plugin's; killed on `VimLeavePre`     |
+| Clear findings | `clear_findings` request                                           | `/nvim-bridge clear` slash command    |
 
 Both wire formats are newline-delimited JSON, request/`response` correlated by
 `id`, with unmatched messages treated as events.
@@ -65,25 +65,25 @@ with findings. Everything below it is a detail it delegates to.
 
 Public functions (each is one `:Pi*` command, wired in `plugin/pi.lua`):
 
-| Function | Command | Job |
-|---|---|---|
-| `setup(options)` | — | merge config, install mappings, configure diagnostics, and install autocommands (revalidate findings on edit/enter/write; stop headless workers on exit) |
-| `context_add(opts)` | `:PiContextAdd` | capture file or `:range`, prompt for a note, append to the draft |
-| `context_show()` | `:PiContextShow` | open the draft listing scratch buffer |
-| `context_remove()` | `:PiContextRemove` | drop the draft item under the cursor |
-| `context_refresh()` | `:PiContextRefresh` | re-read the cursor item from disk at its current extmark range |
-| `context_clear()` | `:PiContextClear` | empty the draft for this root |
-| `context_move(opts)` | `:PiContextMove {n}` | reorder the cursor item |
-| `context_send()` | `:PiContextSend` | prompt for an instruction, bundle the draft, deliver, clear on acceptance |
-| `send_current(opts)` | `:PiSend` | one-shot **pointer** send that bypasses the draft: a path plus the selected range or cursor line, no source |
-| `attach()` | `:PiAttach` | pick and attach an opted-in terminal session |
-| `sessions()` | `:PiSessions` | list attached + discoverable sessions |
-| `findings()` | `:PiFindings` | revalidate and open the findings listing |
-| `reply()` | `:PiReply` | reply to the finding at cursor, in the session that raised it |
-| `clear()` | `:PiClear` | clear the cursor finding (or all), then tell Pi best-effort |
-| `response()` | `:PiResponse` | show the headless worker's last assistant reply |
-| `status()` | `:PiStatus` | mode / activity / session id |
-| `stop()` | `:PiStop` | stop the headless worker, printing the resume command |
+| Function             | Command              | Job                                                                                                                                                      |
+| -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setup(options)`     | —                    | merge config, install mappings, configure diagnostics, and install autocommands (revalidate findings on edit/enter/write; stop headless workers on exit) |
+| `context_add(opts)`  | `:PiContextAdd`      | capture file or `:range`, prompt for a note, append to the draft                                                                                         |
+| `context_show()`     | `:PiContextShow`     | open the draft listing scratch buffer                                                                                                                    |
+| `context_remove()`   | `:PiContextRemove`   | drop the draft item under the cursor                                                                                                                     |
+| `context_refresh()`  | `:PiContextRefresh`  | re-read the cursor item from disk at its current extmark range                                                                                           |
+| `context_clear()`    | `:PiContextClear`    | empty the draft for this root                                                                                                                            |
+| `context_move(opts)` | `:PiContextMove {n}` | reorder the cursor item                                                                                                                                  |
+| `context_send()`     | `:PiContextSend`     | prompt for an instruction, bundle the draft, deliver, clear on acceptance                                                                                |
+| `send_current(opts)` | `:PiSend`            | one-shot **pointer** send that bypasses the draft: a path plus the selected range or cursor line, no source                                              |
+| `attach()`           | `:PiAttach`          | pick and attach an opted-in terminal session                                                                                                             |
+| `sessions()`         | `:PiSessions`        | list attached + discoverable sessions                                                                                                                    |
+| `findings()`         | `:PiFindings`        | revalidate and open the findings listing                                                                                                                 |
+| `reply()`            | `:PiReply`           | reply to the finding at cursor, in the session that raised it                                                                                            |
+| `clear()`            | `:PiClear`           | clear the cursor finding (or all), then tell Pi best-effort                                                                                              |
+| `response()`         | `:PiResponse`        | show the headless worker's last assistant reply                                                                                                          |
+| `status()`           | `:PiStatus`          | mode / activity / session id                                                                                                                             |
+| `stop()`             | `:PiStop`            | stop the headless worker, printing the resume command                                                                                                    |
 
 Internal seams worth knowing:
 
@@ -91,7 +91,7 @@ Internal seams worth knowing:
   wins, else exactly one descriptor auto-attaches, else pick, else `config.fallback`
   (`ask` / `headless` / `none`) decides. Nothing starts Pi without a user send.
 - `deliver(root, message, on_sent)` — sends one encoded message; if Pi is working
-  it asks *steer vs. queue* rather than guessing. Encoding stays with the caller,
+  it asks _steer vs. queue_ rather than guessing. Encoding stays with the caller,
   which knows whether it is sending a draft bundle, a pointer, or an instruction
   with no context at all.
 - `install_session_handlers(root)` — wires this module's reactions onto the
@@ -112,12 +112,12 @@ quotes nothing and only says where the user is.
 - `buffer_is_saved(bufnr)` → `ok, path|reason`; rejects unnamed, modified, or
   externally-changed buffers (CRLF and trailing-newline normalised for the compare).
 - `range(bufnr, first, last)` → excerpt record `{root, path, relative_path,
-  start_line, end_line, text, bufnr}`.
+start_line, end_line, text, bufnr}`.
 - `file(bufnr)` → same, tagged `kind = "whole_file"`. Note that an empty file has
   no lines to quote, so this refuses one even though the buffer is saved.
 - `read_range(path, first, last)` → `text` straight from disk, for re-reads.
 - `pointer(bufnr, first, last)` → `{root, path, relative_path, start_line?,
-  end_line?, cursor_line?, modified, exists}`. Reads nothing and compares nothing,
+end_line?, cursor_line?, modified, exists}`. Reads nothing and compares nothing,
   so it succeeds for every buffer naming a real file inside the root — including
   empty, never-written, and modified ones, all of which `range` must refuse.
   Because it never touches the file, the checks that a location is real are
@@ -180,7 +180,7 @@ from stdout, accumulates stderr for the exit report, then requests `get_state` a
 resumed session shows what Pi still believes is current.
 
 - `feed/receive` — line framing and event dispatch: keeps `latest_response`, tracks
-  `edit`/`write` paths as a reload *hint*, forwards published findings.
+  `edit`/`write` paths as a reload _hint_, forwards published findings.
 - `ui_request(event)` — answers Pi's extension UI calls (`select`, `confirm`,
   `input`, `editor`, `notify`, `setStatus`, `setWidget`, `setTitle`,
   `set_editor_text`) with Neovim equivalents. Handled inline because Pi blocks on it.
@@ -256,11 +256,11 @@ socket is claimed process-wide — see below.
 ## Data shapes
 
 - **Descriptor** (runtime dir JSON) — `version, root, session_id, session_file,
-  display_name, pid, started_at, socket_path, activity, capabilities`.
+display_name, pid, started_at, socket_path, activity, capabilities`.
 - **Request/bundle** — `{id, root, note, contexts: [...]}`, where a context is
   either an excerpt `{id, kind, path, start_line, end_line, text, note}` or a
-  pointer `{id, path, note}` plus *either* `start_line`/`end_line` (a selection)
-  *or* `cursor_line`, or neither. Absent fields are omitted from the JSON.
+  pointer `{id, path, note}` plus _either_ `start_line`/`end_line` (a selection)
+  _or_ `cursor_line`, or neither. Absent fields are omitted from the JSON.
   `formatContextEnvelope` renders any context with no `text` as a location with
   no code fence, and resolves its path against the envelope `root`, because Pi's
   working directory may be a subdirectory of the root it was matched on.
@@ -268,7 +268,7 @@ socket is claimed process-wide — see below.
   as the bare note. It is still sent as JSON so that an instruction beginning
   with `/` reaches the model instead of being run as a slash command.
 - **Finding** — `{id, request_id, context_item_id?, path, start_line, end_line,
-  severity, title, message, expected_text}` (+ `stale`, `origin_session_id`,
+severity, title, message, expected_text}` (+ `stale`, `origin_session_id`,
   `origin_session_file` on the Neovim side).
 
 ## Invariants
@@ -297,15 +297,15 @@ socket is claimed process-wide — see below.
 
 ## Where to change what
 
-| Goal | Start at |
-|---|---|
-| New `:Pi*` command | `plugin/pi.lua` + a public function in `lua/pi/init.lua` |
-| Change what gets captured / staleness rules | `lua/pi/context.lua` |
-| Change what `:PiSend` tells Pi about the user's location | `context.pointer` + `init.send_current` |
-| Change the message Pi receives | `draft.bundle` / `draft.envelope` |
-| Change target selection or fallback behaviour | `init.ensure_target`, `session.lua` |
-| New bridge request or event | `transport/socket.lua` + `serveClient` in `index.ts` (bump `VERSION` if incompatible) |
-| New headless capability / Pi UI primitive | `transport/rpc.lua` (`receive`, `ui_request`) |
-| Change how findings look or when they go stale | `lua/pi/findings.lua`, `ui.open_findings` |
-| Change finding validation | `validateFinding` in `pi-extension/protocol.ts` |
-| Change root or containment rules | `lua/pi/project.lua` **and** `protocol.ts` (`inside`, `canonicalRoot`) |
+| Goal                                                     | Start at                                                                              |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| New `:Pi*` command                                       | `plugin/pi.lua` + a public function in `lua/pi/init.lua`                              |
+| Change what gets captured / staleness rules              | `lua/pi/context.lua`                                                                  |
+| Change what `:PiSend` tells Pi about the user's location | `context.pointer` + `init.send_current`                                               |
+| Change the message Pi receives                           | `draft.bundle` / `draft.envelope`                                                     |
+| Change target selection or fallback behaviour            | `init.ensure_target`, `session.lua`                                                   |
+| New bridge request or event                              | `transport/socket.lua` + `serveClient` in `index.ts` (bump `VERSION` if incompatible) |
+| New headless capability / Pi UI primitive                | `transport/rpc.lua` (`receive`, `ui_request`)                                         |
+| Change how findings look or when they go stale           | `lua/pi/findings.lua`, `ui.open_findings`                                             |
+| Change finding validation                                | `validateFinding` in `pi-extension/protocol.ts`                                       |
+| Change root or containment rules                         | `lua/pi/project.lua` **and** `protocol.ts` (`inside`, `canonicalRoot`)                |
