@@ -8,6 +8,9 @@ native diagnostics.
 > pi.nvim is under active development. It works as a prototype, but its API and
 > behavior may change.
 
+This project is actively maintained by me to support my own workflow. Its design
+is intentionally minimal and aims to stay out of the way.
+
 pi.nvim keeps code navigation in Neovim and the conversation in Pi. Ask about
 the file you are in without leaving it, or assemble a draft of excerpts from
 several files, without copying source into a terminal. Pi can respond in its
@@ -257,6 +260,11 @@ the current turn or wait as a follow-up.
   when their expected source no longer matches.
 - pi.nvim does not provide accept/reject or patch-staging controls. Review Pi's
   changes with your normal editor and Git workflow.
+
+## AI Disclaimer
+
+This project was created with extensive assistance from AI tools, including for
+code, documentation, and design exploration.
 
 ## Development
 
