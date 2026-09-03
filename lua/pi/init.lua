@@ -138,6 +138,9 @@ local function ensure_target(root, callback)
 		if current_session.stopping then
 			return callback(nil, "the existing Pi worker is still stopping")
 		end
+		if current_session.replacing then
+			return callback(nil, "a new Pi session is still starting")
+		end
 		return callback(current_session)
 	end
 	local descriptors = session.discover(root)
@@ -146,6 +149,9 @@ local function ensure_target(root, callback)
 	end
 	if #descriptors > 1 then
 		return session.choose_and_attach(root, callback)
+	end
+	if current_session.replacing then
+		return callback(nil, "a new Pi session is still starting")
 	end
 	if M.config.fallback == "none" then
 		return callback(nil, "no Pi target is attached")
@@ -197,6 +203,26 @@ local function deliver(root, message, on_sent)
 			elseif choice == "Queue follow-up" then
 				send("followUp")
 			end
+		end)
+	end)
+end
+
+-- Starts a fresh conversation and sends one already-encoded message into it.
+-- Unlike deliver(), this deliberately ignores the old conversation's activity:
+-- replacing that conversation is the user's explicit choice.
+---@param root string
+---@param message string A context envelope from pi.draft.
+local function deliver_new(root, message)
+	ensure_target(root, function(target, err)
+		if not target then
+			return ui.notify(err, vim.log.levels.WARN)
+		end
+		session.new_conversation(root, message, function(_, new_err)
+			if new_err then
+				return ui.notify("Pi did not start a new session: " .. new_err, vim.log.levels.ERROR)
+			end
+			ui.notify(target.mode == "interactive" and "Starting a new Pi session and sending context"
+				or "Started a new Pi session and sent context")
 		end)
 	end)
 end
@@ -311,13 +337,14 @@ function M.context_send()
 	end)
 end
 
--- :PiSend — a one-shot send that tells Pi where the user is instead of quoting
+-- :PiSend and :PiNew build a one-shot send that tells Pi where the user is instead of quoting
 -- what is there. The pointer carries no source, so Pi reads the file itself,
 -- and that is what lets this work everywhere an excerpt cannot: an empty file,
 -- one that has never been written, one with unsaved changes, or no file at all,
 -- which sends the instruction on its own.
 ---@param opts vim.api.keyset.create_user_command.command_args
-function M.send_current(opts)
+---@param send fun(root: string, message: string)
+local function send_current_with(opts, send)
 	local ranged = opts and opts.range and opts.range > 0
 	-- Resolved before the prompt: vim.ui.input can move the cursor, and the
 	-- selection is gone by the time the user has finished typing.
@@ -340,7 +367,7 @@ function M.send_current(opts)
 				return ui.notify("Nothing to send: " .. reason, vim.log.levels.WARN)
 			end
 			ui.notify("Sending without a file: " .. reason, vim.log.levels.WARN)
-			return deliver(root, draft.envelope({ id = draft.new_id(), root = root, note = note, contexts = {} }))
+			return send(root, draft.envelope({ id = draft.new_id(), root = root, note = note, contexts = {} }))
 		end
 		-- Pi resolves the pointer by reading the file, so anything that makes disk
 		-- and buffer disagree is worth saying out loud rather than letting Pi
@@ -371,8 +398,21 @@ function M.send_current(opts)
 				},
 			},
 		}
-		deliver(root, draft.envelope(request))
+		send(root, draft.envelope(request))
 	end)
+end
+
+-- :PiSend — send a pointer request into the current conversation.
+---@param opts vim.api.keyset.create_user_command.command_args
+function M.send_current(opts)
+	send_current_with(opts, deliver)
+end
+
+-- :PiNew — start a fresh conversation, then send the same pointer request as
+-- :PiSend. The request is fully captured before replacing the session.
+---@param opts vim.api.keyset.create_user_command.command_args
+function M.new(opts)
+	send_current_with(opts, deliver_new)
 end
 
 -- :PiAttach

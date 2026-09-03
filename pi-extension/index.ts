@@ -7,13 +7,15 @@
 // when it shares the project. The socket then serves Neovim's requests (send a
 // message, clear findings) and pushes activity, edit, and findings events. The
 // `nvim_publish_findings` tool is how Pi returns review annotations, which are
-// editor-only and never touch source files.
+// editor-only and never touch source files. The bridge also supports atomically
+// replacing a conversation and sending the first prompt into its successor.
 //
 // Findings live in Pi's session history rather than in memory alone, so they are
 // rebuilt on reattach and survive a restart.
 
 import type {
   ExtensionAPI,
+  ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -55,9 +57,46 @@ const OPTED_IN = Symbol.for("pi.nvim.extension.optedIn");
 // path, the second unlinking the first's socket and leaving it listening on an
 // inode nothing can reach.
 const BOUND = Symbol.for("pi.nvim.extension.bound");
+// Command-context capability used by the bridge's atomic new-session send.
+// Like opt-in state, it must survive extension module re-evaluation during the
+// very session replacement it initiates.
+const SESSION_CONTROL = Symbol.for("pi.nvim.extension.sessionControl");
 // Session entry type recording that findings were cleared. Clearing has to be
 // part of the history, otherwise replaying it would resurrect them.
 const FINDINGS_CLEAR_TYPE = "pi.nvim/findings-clear";
+
+type StartNewSession = (message: string) => Promise<void>;
+type SessionControl = {
+  start: StartNewSession | undefined;
+  replacing: boolean;
+};
+
+// Session control is intentionally available only through a command context.
+// /nvim-bridge captures that user-authorized capability; withSession replaces
+// it with a fresh one before the old extension runtime becomes stale.
+function sessionControl(): SessionControl {
+  const global = globalThis as unknown as Record<symbol, SessionControl>;
+  return (global[SESSION_CONTROL] ??= { start: undefined, replacing: false });
+}
+
+function bindSessionControl(ctx: ExtensionCommandContext): void {
+  const control = sessionControl();
+  control.start = async (message) => {
+    control.replacing = true;
+    try {
+      const result = await ctx.newSession({
+        withSession: async (replacement) => {
+          bindSessionControl(replacement);
+          control.replacing = false;
+          await replacement.sendUserMessage(message);
+        },
+      });
+      if (result.cancelled) throw new Error("Pi cancelled the new session");
+    } finally {
+      control.replacing = false;
+    }
+  };
+}
 
 type Runtime = {
   root: string;
@@ -206,7 +245,7 @@ function descriptor(runtime: Runtime): Record<string, unknown> {
     started_at: Date.now(),
     socket_path: runtime.socketPath,
     activity: runtime.ctx.isIdle() ? "idle" : "working",
-    capabilities: ["send", "findings", "tool_activity"],
+    capabilities: ["send", "new_session", "findings", "tool_activity"],
   };
 }
 
@@ -225,8 +264,13 @@ function respond(
   id: unknown,
   data?: unknown,
   error?: string,
+  callback?: () => void,
 ): void {
-  socket.write(JSON.stringify({ type: "response", id, data, error }) + "\n");
+  socket.write(
+    JSON.stringify({ type: "response", id, data, error }) + "\n",
+    "utf8",
+    callback,
+  );
 }
 
 function serveRequest(runtime: Runtime, socket: Socket, rawLine: string): void {
@@ -270,6 +314,47 @@ function serveRequest(runtime: Runtime, socket: Socket, rawLine: string): void {
           error instanceof Error ? error.message : String(error),
         );
       }
+    }
+  } else if (
+    message.type === "new_session" &&
+    typeof message.message === "string"
+  ) {
+    const control = sessionControl();
+    const replace = control.start;
+    const newMessage = message.message;
+    if (control.replacing)
+      respond(
+        socket,
+        message.id,
+        undefined,
+        "a new Pi session is already starting",
+      );
+    else if (!replace)
+      respond(
+        socket,
+        message.id,
+        undefined,
+        "session control is unavailable; run /nvim-bridge enable in this Pi session",
+      );
+    else {
+      // A session swap destroys this socket, so acknowledge the complete atomic
+      // operation before starting it. withSession above performs the send only
+      // against the replacement session.
+      control.replacing = true;
+      respond(socket, message.id, { accepted: true }, undefined, () => {
+        void replace(newMessage).catch((error) => {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          if (!socket.destroyed)
+            socket.write(
+              JSON.stringify({
+                type: "new_session_failed",
+                error: errorMessage,
+              }) + "\n",
+            );
+          console.error(`pi.nvim could not start a new session: ${errorMessage}`);
+        });
+      });
     }
   } else if (message.type === "clear_findings") {
     const id =
@@ -414,6 +499,12 @@ export default function (pi: ExtensionAPI): void {
       findings: new Map(),
       changedPaths: new Set(),
     };
+    // A terminal /new did not pass through the bridge's withSession callback,
+    // so the old command context is stale. Running /nvim-bridge enable once in
+    // that replacement session grants a fresh one. Bridge-initiated replacement
+    // keeps the capability until withSession refreshes it below.
+    const control = sessionControl();
+    if (!control.replacing) control.start = undefined;
     restoreFindings(runtime);
     // /new, /resume, /fork, and /reload replace this instance, and the socket
     // was named after the session it belonged to, so it went away with it.
@@ -485,6 +576,7 @@ export default function (pi: ExtensionAPI): void {
       "Toggle the local Neovim bridge, or use enable, disable, or clear [finding-id]",
     handler: async (args, ctx) => {
       if (!runtime) return;
+      bindSessionControl(ctx);
       const command = args.trim();
       if (command === "enable") ctx.ui.notify(enable(runtime), "info");
       else if (command === "disable") ctx.ui.notify(disable(runtime), "info");

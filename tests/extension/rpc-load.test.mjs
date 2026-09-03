@@ -11,7 +11,7 @@ import test from "node:test";
 
 const packageRoot = new URL("../..", import.meta.url).pathname;
 
-test("companion extension loads in Pi RPC mode", async () => {
+test("companion extension loads and Pi can replace its RPC session", async (t) => {
   const child = spawn(
     "pi",
     ["-ne", "--mode", "rpc", "--extension", "./pi-extension/index.ts"],
@@ -29,26 +29,36 @@ test("companion extension loads in Pi RPC mode", async () => {
   child.stderr.on("data", (chunk) => {
     stderrText += chunk;
   });
-  child.stdin.write('{"id":"state","type":"get_state"}\n');
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`timed out: ${stderrText}`)),
-      15_000,
-    );
-    // Responses share the stream with startup output, so poll for the line
-    // carrying our request id rather than assuming it arrives first.
-    const poll = setInterval(() => {
-      const line = output
-        .split("\n")
-        .find((entry) => entry.includes('"id":"state"'));
-      if (!line) return;
-      clearInterval(poll);
-      clearTimeout(timer);
-      const response = JSON.parse(line);
-      assert.equal(response.type, "response");
-      assert.equal(response.success, true);
-      resolve();
-    }, 10);
-  });
-  child.kill("SIGTERM");
+  t.after(() => child.kill("SIGTERM"));
+
+  const responseFor = (id) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`timed out: ${stderrText}`)),
+        15_000,
+      );
+      // Responses share the stream with startup output, so poll for the line
+      // carrying our request id rather than assuming it arrives first.
+      const poll = setInterval(() => {
+        const line = output
+          .split("\n")
+          .find((entry) => entry.includes(`"id":"${id}"`));
+        if (!line) return;
+        clearInterval(poll);
+        clearTimeout(timer);
+        const response = JSON.parse(line);
+        assert.equal(response.type, "response");
+        assert.equal(response.success, true);
+        resolve(response);
+      }, 10);
+    });
+
+  child.stdin.write('{"id":"before","type":"get_state"}\n');
+  const before = await responseFor("before");
+  child.stdin.write('{"id":"new","type":"new_session"}\n');
+  const replacement = await responseFor("new");
+  assert.equal(replacement.data.cancelled, false);
+  child.stdin.write('{"id":"after","type":"get_state"}\n');
+  const after = await responseFor("after");
+  assert.notEqual(after.data.sessionId, before.data.sessionId);
 });

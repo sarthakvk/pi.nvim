@@ -52,6 +52,7 @@ pi-extension/protocol.ts shared wire version, Finding type, path validation
 | Discovery      | descriptor JSON files, matched on `root`                           | none; started on demand               |
 | Lifetime       | user's; left running                                               | plugin's; killed on `VimLeavePre`     |
 | Clear findings | `clear_findings` request                                           | `/nvim-bridge clear` slash command    |
+| New + send     | atomic `new_session` bridge request                                | `new_session`, `get_state`, `prompt`  |
 
 Both wire formats are newline-delimited JSON, request/`response` correlated by
 `id`, with unmatched messages treated as events.
@@ -76,6 +77,7 @@ Public functions (each is one `:Pi*` command, wired in `plugin/pi.lua`):
 | `context_move(opts)` | `:PiContextMove {n}` | reorder the cursor item                                                                                                                                  |
 | `context_send()`     | `:PiContextSend`     | prompt for an instruction, bundle the draft, deliver, clear on acceptance                                                                                |
 | `send_current(opts)` | `:PiSend`            | one-shot **pointer** send that bypasses the draft: a path plus the selected range or cursor line, no source                                              |
+| `new(opts)`          | `:PiNew`             | capture the same pointer request as `:PiSend`, replace the conversation, then send                                                                        |
 | `attach()`           | `:PiAttach`          | pick and attach an opted-in terminal session                                                                                                             |
 | `sessions()`         | `:PiSessions`        | list attached + discoverable sessions                                                                                                                    |
 | `findings()`         | `:PiFindings`        | revalidate and open the findings listing                                                                                                                 |
@@ -94,6 +96,8 @@ Internal seams worth knowing:
   it asks _steer vs. queue_ rather than guessing. Encoding stays with the caller,
   which knows whether it is sending a draft bundle, a pointer, or an instruction
   with no context at all.
+- `deliver_new(root, message)` — resolves a target, then delegates strict
+  replace-before-send ordering to `session.new_conversation`.
 - `install_session_handlers(root)` — wires this module's reactions onto the
   session state table (findings, known changes, settled, exit, status/widget/title,
   editor prefill). Re-run before every attach/start because state outlives transports.
@@ -157,6 +161,8 @@ namespace `pi.nvim.draft` so it follows edits.
 - `choose_and_attach(root, cb)` — 0 → error, 1 → attach, many → `ui.select`.
 - `start_headless(root, config, cb)` — spawn the RPC worker (resuming the saved
   session when `resume_headless`), forward its handlers, persist the new session id.
+- `new_conversation(root, message, cb)` — atomic reset-and-send for an interactive
+  bridge; for headless, reset, refresh and persist identifiers, then send.
 - `stop(root)` — mark stopping, abort + SIGTERM; returns the session reference so
   the caller can print a resume command. Teardown happens in the worker's exit handler.
 
@@ -167,8 +173,9 @@ buffers never reload mid-turn.
 
 `connect(descriptor, root, handlers, cb)` connects, frames NDJSON, and performs a
 `hello` handshake that **also guards**: a mismatched version or root aborts the
-connection. `send(message, delivery, cb)`, `clear_findings(id, cb)`, `close(reason)`
-(which fails all in-flight callbacks). All libuv callbacks re-enter via `vim.schedule`.
+connection. `send(message, delivery, cb)`, `new_session(message, cb)`,
+`clear_findings(id, cb)`, `close(reason)` (which fails all in-flight callbacks).
+All libuv callbacks re-enter via `vim.schedule`.
 
 ### `transport/rpc.lua` — headless transport
 
@@ -184,7 +191,9 @@ resumed session shows what Pi still believes is current.
 - `ui_request(event)` — answers Pi's extension UI calls (`select`, `confirm`,
   `input`, `editor`, `notify`, `setStatus`, `setWidget`, `setTitle`,
   `set_editor_text`) with Neovim equivalents. Handled inline because Pi blocks on it.
-- `command/request/send/extension_command/stop/close` — the write side.
+- `command/request/send/new_session/extension_command/stop/close` — the write side.
+  `new_session` uses Pi's dedicated RPC operation, refreshes `get_state`, and
+  clears response/change/finding snapshots before its caller sends.
 
 ### `findings.lua` — annotations
 
@@ -228,10 +237,11 @@ socket is claimed process-wide — see below.
   `/fork`, `/clone`, and `/reload` each close the old session and rebind a fresh
   extension instance, so `session_start` re-opens the socket — named after the
   new session for the first four, the same name again for `/reload`, which keeps
-  its session id. Two symbols on `globalThis` carry this across the swap, because
+  its session id. Process-global symbols carry this across the swap, because
   the module itself may be re-evaluated: `optedIn` (roots the user turned on,
   keyed by root so `/resume` into another project stays dark) and `bound` (the
-  socket path a live server holds, so a duplicate instance cannot unlink it).
+  socket path a live server holds, so a duplicate instance cannot unlink it),
+  plus the command-context capability needed for atomic session replacement.
   Neither is persisted — restarting Pi means opting in again. Neovim reconnects
   on its own (`ensure_target` re-discovers once the transport closes), so it
   picks up the replacement session's id rather than keeping a stale one.
@@ -240,7 +250,9 @@ socket is claimed process-wide — see below.
   diagnostic; the extension validates the whole batch and reads `expected_text`
   from disk before publishing any of it.
 - Socket server (`serveClient`) — `hello` (version + root guard), `send` (refuses a
-  plain send into a busy Pi; requires `steer`/`followUp`), `clear_findings`.
+  plain send into a busy Pi; requires `steer`/`followUp`), `new_session` (acknowledge,
+  then `ctx.newSession({withSession})` and send through the replacement context),
+  `clear_findings`.
 - Events pushed to clients: `activity` on `agent_start`/`agent_settled`,
   `tool_activity` (batched edited paths, emitted on settle), and `findings` — always
   the complete set, so a client that missed one converges.
@@ -288,7 +300,8 @@ severity, title, message, expected_text}` (+ `stale`, `origin_session_id`,
 ## Tests
 
 - `npm test` — `tests/lua/run.lua`, offline: capture refusals, the pointer cases
-  those refusals leave behind, extmark tracking, and JSON envelope data handling.
+  those refusals leave behind, extmark tracking, JSON envelopes, and `:PiNew`
+  reset-before-send ordering.
 - `npm run test:extension` — offline: `rpc-load.test.mjs` loads the extension in
   `pi --mode rpc` without collision, and `envelope.test.mjs` pins the Markdown
   `formatContextEnvelope` produces for both excerpts and pointers.

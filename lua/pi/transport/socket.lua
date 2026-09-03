@@ -131,6 +131,15 @@ function M:send(message, delivery, callback)
 	self:request({ type = "send", message = message, delivery = delivery }, callback)
 end
 
+-- The peer replaces its session and sends the message atomically. A plain
+-- reset followed by another socket request cannot work because /new closes the
+-- socket as part of replacing the extension runtime.
+---@param message string
+---@param callback fun(data: table?, err: string?)
+function M:new_session(message, callback)
+	self:request({ type = "new_session", message = message }, callback)
+end
+
 ---@param id string? A single finding to drop, or nil to clear them all.
 ---@param callback fun(data: table?, err: string?)
 function M:clear_findings(id, callback)
