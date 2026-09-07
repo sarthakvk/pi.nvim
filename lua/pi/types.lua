@@ -23,6 +23,7 @@
 ---@field prefix string Prepended to each enabled action suffix.
 ---@field add_context string|false
 ---@field send_current string|false
+---@field new string|false
 ---@field send_draft string|false
 ---@field show_context string|false
 ---@field remove_context string|false
@@ -104,6 +105,7 @@
 ---@field session_id? string
 ---@field session_file? string
 ---@field stopping? boolean
+---@field replacing? boolean A :PiNew session replacement is in flight.
 ---@field known_changes? table<string, boolean> Paths Pi reported editing, applied once it goes idle.
 ---@field status? table<string, string> Status lines an extension set through Pi's UI protocol.
 ---@field widgets? table<string, pi.Widget> Widgets an extension set through Pi's UI protocol.

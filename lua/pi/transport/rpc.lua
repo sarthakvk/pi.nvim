@@ -319,6 +319,37 @@ function M:send(message, delivery, callback)
 	self:request(command, callback)
 end
 
+-- Pi exposes session replacement as a dedicated RPC operation rather than a
+-- slash-command prompt. Refresh state only after that operation answers so a
+-- caller cannot send into the old conversation or persist its identifiers.
+---@param callback fun(data: table?, err: string?)
+function M:new_session(callback)
+	self:request({ type = "new_session" }, function(data, err)
+		if err then
+			return callback(nil, err)
+		end
+		if data and data.cancelled then
+			return callback(nil, "Pi cancelled the new session")
+		end
+		self:request({ type = "get_state" }, function(state, state_err)
+			if state_err then
+				self.state = nil
+				return callback({ replaced = true }, state_err)
+			end
+			self.state = state
+			self.latest_response = nil
+			self.changed_paths = {}
+			if self.handlers.on_findings_snapshot then
+				self.handlers.on_findings_snapshot(
+					{},
+					{ origin_session_id = state.sessionId, origin_session_file = state.sessionFile }
+				)
+			end
+			callback(data)
+		end)
+	end)
+end
+
 -- Pi's RPC protocol dispatches extension slash commands immediately without an LLM turn.
 ---@param command string Slash command without its leading slash.
 ---@param callback fun(data: table?, err: string?)

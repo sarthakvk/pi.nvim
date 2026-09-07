@@ -116,6 +116,9 @@ function M.attach(root, descriptor, callback)
 				for _, path in ipairs(event.paths or {}) do
 					current.known_changes[path] = true
 				end
+			elseif event.type == "new_session_failed" then
+				current.replacing = nil
+				ui.notify("Pi did not start a new session: " .. (event.error or "unknown error"), vim.log.levels.ERROR)
 			end
 		end,
 	}, function(transport, err)
@@ -130,7 +133,7 @@ function M.attach(root, descriptor, callback)
 		end
 		current.transport, current.mode, current.descriptor = transport, "interactive", descriptor
 		current.session_id, current.session_file = transport.state.session_id, transport.state.session_file
-		current.activity = transport.state.activity or "idle"
+		current.activity, current.replacing = transport.state.activity or "idle", nil
 		callback(current)
 	end)
 end
@@ -278,6 +281,56 @@ function M.start_headless(root, config, callback)
 		-- of opening a fresh one.
 		save_session(root, { session_id = current.session_id, session_file = current.session_file })
 		callback(current)
+	end)
+end
+
+-- Replaces the attached conversation and sends the prepared message only after
+-- replacement. Interactive Pi must do both inside one bridge request because
+-- its socket is torn down by /new; the owned RPC worker can reset, refresh its
+-- identifiers, and then send in sequence here.
+---@param root string
+---@param message string
+---@param callback fun(data: table?, err: string?)
+function M.new_conversation(root, message, callback)
+	local current = state_for(root)
+	if not current.transport or current.transport.closed then
+		return callback(nil, "no Pi target is attached")
+	end
+	if current.replacing then
+		return callback(nil, "a new Pi session is already starting")
+	end
+	current.replacing = true
+	if current.mode == "interactive" then
+		return current.transport:new_session(message, function(data, err)
+			if err then
+				current.replacing = nil
+			end
+			callback(data, err)
+		end)
+	end
+	if current.mode ~= "headless" then
+		current.replacing = nil
+		return callback(nil, "the attached Pi target cannot start a new session")
+	end
+	current.transport:new_session(function(data, err)
+		if err then
+			current.replacing = nil
+			if data and data.replaced then
+				current.session_id, current.session_file = nil, nil
+				vim.fn.delete(project.state_file(root))
+				current.stopping, current.activity = true, "stopping"
+				current.transport:stop()
+			end
+			return callback(nil, err)
+		end
+		current.session_id = current.transport.state.sessionId
+		current.session_file = current.transport.state.sessionFile
+		current.activity = "idle"
+		save_session(root, { session_id = current.session_id, session_file = current.session_file })
+		current.transport:send(message, nil, function(result, send_err)
+			current.replacing = nil
+			callback(result, send_err)
+		end)
 	end)
 end
 

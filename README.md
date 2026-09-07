@@ -8,6 +8,9 @@ native diagnostics.
 > pi.nvim is under active development. It works as a prototype, but its API and
 > behavior may change.
 
+This project is actively maintained by me to support my own workflow. Its design
+is intentionally minimal and aims to stay out of the way.
+
 pi.nvim keeps code navigation in Neovim and the conversation in Pi. Ask about
 the file you are in without leaving it, or assemble a draft of excerpts from
 several files, without copying source into a terminal. Pi can respond in its
@@ -88,6 +91,10 @@ have not written yet, or one with unsaved changes. Pi reads what is on disk, so
 pi.nvim warns when that is behind your buffer. With no file at all, the
 instruction is sent on its own.
 
+Use `:PiNew` instead to start a fresh Pi conversation before sending the same
+file pointer and instruction. It accepts the same range and optional context
+note as `:PiSend`.
+
 To have Pi work from exact source rather than reading for itself — a quote of
 particular lines, or several files at once — build a draft instead:
 
@@ -115,6 +122,10 @@ session, resuming, forking, or reloading keeps the bridge on and re-advertises
 whichever session is now current. Neovim reattaches on the next send. Quitting
 Pi ends the opt-in, so a fresh `pi` is invisible until you run `/nvim-bridge`
 again.
+
+`PiNew` refreshes its session-control capability as part of its own replacement.
+After replacing a session directly in the Pi terminal, run `/nvim-bridge enable`
+once in that session before using `PiNew`; ordinary sends remain available.
 
 The prompt, streamed response, and normal Pi controls remain in the terminal.
 Closing Neovim does not stop an interactive Pi session.
@@ -172,6 +183,7 @@ The default mappings keep all Pi actions under `<leader>p`:
 | ------------ | -------------- | ------------------------------------------------------------- |
 | `<leader>pa` | Normal, Visual | Add the current file or selection to the context draft        |
 | `<leader>ps` | Normal, Visual | Send an instruction pointing at the current file or selection |
+| `<leader>pn` | Normal, Visual | Start a new conversation and send the current file or selection |
 | `<leader>pS` | Normal         | Send the context draft                                        |
 | `<leader>pv` | Normal         | View the context draft                                        |
 | `<leader>pd` | Normal         | Delete the context item under the cursor                      |
@@ -210,6 +222,7 @@ consistent icon automatically; set `which_key = false` to opt out.
 | Command                       | Description                                                       |
 | ----------------------------- | ----------------------------------------------------------------- |
 | `:[range]PiSend [note]`       | Send an instruction that points Pi at the current file or range   |
+| `:[range]PiNew [note]`        | Start a new conversation, then perform the same send              |
 | `:[range]PiContextAdd [note]` | Add the current saved file or range, quoted, to the project draft |
 | `:PiContextShow`              | Open the current project's draft                                  |
 | `:PiContextRemove`            | Remove the draft item under the cursor                            |
@@ -247,6 +260,11 @@ the current turn or wait as a follow-up.
   when their expected source no longer matches.
 - pi.nvim does not provide accept/reject or patch-staging controls. Review Pi's
   changes with your normal editor and Git workflow.
+
+## AI Disclaimer
+
+This project was created with extensive assistance from AI tools, including for
+code, documentation, and design exploration.
 
 ## Development
 

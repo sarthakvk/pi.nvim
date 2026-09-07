@@ -7,6 +7,10 @@
 
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
 require("pi").setup({ max_context_bytes = 1024 * 1024 })
+vim.cmd("runtime plugin/pi.lua")
+
+local commands = vim.api.nvim_get_commands({ builtin = false })
+assert(commands.PiNew and commands.PiNew.nargs == "*", ":PiNew must accept the same note arguments as :PiSend")
 
 local function mapping(mode, lhs)
 	return vim.fn.maparg(lhs, mode, false, true)
@@ -18,6 +22,8 @@ assert(mapping("n", "<leader>pa").rhs == ":PiContextAdd<cr>")
 assert(mapping("x", "<leader>pa").rhs == ":PiContextAdd<cr>")
 assert(mapping("n", "<leader>ps").rhs == ":PiSend<cr>")
 assert(mapping("x", "<leader>ps").rhs == ":PiSend<cr>")
+assert(mapping("n", "<leader>pn").rhs == ":PiNew<cr>")
+assert(mapping("x", "<leader>pn").rhs == ":PiNew<cr>")
 assert(mapping("x", "<leader>pS").lhs == nil)
 
 local keymaps = require("pi.keymaps")
@@ -252,6 +258,107 @@ assert(pointer_decoded.contexts[1].text == nil, "the pointer envelope must carry
 assert(pointer_decoded.contexts[1].kind == nil)
 assert(pointer_decoded.contexts[1].start_line == nil)
 
+-- :PiNew captures the same pointer and command note as :PiSend before waiting
+-- for the instruction, then hands the prepared envelope to session replacement.
+vim.cmd("edit " .. vim.fn.fnameescape(one_path))
+local session = require("pi.session")
+local real_input, real_new_conversation = ui.input, session.new_conversation
+local instruction_callback, new_root, new_message
+---@diagnostic disable-next-line: duplicate-set-field
+ui.input = function(_, callback)
+	instruction_callback = callback
+end
+---@diagnostic disable-next-line: missing-fields
+session.state[one.root] = { root = one.root, mode = "headless", activity = "idle", transport = { closed = false } }
+session.new_conversation = function(root_argument, message, callback)
+	new_root, new_message = root_argument, message
+	callback({ accepted = true })
+end
+vim.cmd("1,2PiNew selected lines")
+assert(not new_message, ":PiNew must not reset the session before the instruction is entered")
+vim.api.nvim_win_set_cursor(0, { 3, 0 })
+assert(instruction_callback)
+instruction_callback("review from scratch")
+local new_decoded = vim.json.decode(new_message)
+assert(new_root == one.root)
+assert(new_decoded.note == "review from scratch")
+assert(new_decoded.contexts[1].path == "one.txt")
+assert(new_decoded.contexts[1].start_line == 1 and new_decoded.contexts[1].end_line == 2)
+assert(new_decoded.contexts[1].note == "selected lines")
+ui.input, session.new_conversation = real_input, real_new_conversation
+
+-- Headless replacement must finish and publish its new identifiers before the
+-- prompt is sent. The new identifiers are also the ones persisted for resume.
+local order, reset_callback, sent_callback = {}, nil, false
+local fake_rpc = {
+	closed = false,
+	state = { sessionId = "old", sessionFile = "/tmp/old.jsonl" },
+	new_session = function(_, callback)
+		table.insert(order, "new_session")
+		reset_callback = callback
+	end,
+	send = function(_, message, delivery, callback)
+		table.insert(order, "send")
+		assert(message == "prepared" and delivery == nil)
+		callback({ accepted = true })
+	end,
+}
+session.state[one.root] = {
+	root = one.root,
+	mode = "headless",
+	activity = "working",
+	transport = fake_rpc,
+}
+session.new_conversation(one.root, "prepared", function(_, send_err)
+	assert(not send_err)
+	sent_callback = true
+end)
+assert(vim.deep_equal(order, { "new_session" }), "send must wait for new_session")
+assert(session.state[one.root].replacing)
+local duplicate_error
+session.new_conversation(one.root, "duplicate", function(_, send_err)
+	duplicate_error = send_err
+end)
+assert(duplicate_error == "a new Pi session is already starting")
+assert(vim.deep_equal(order, { "new_session" }), "overlapping replacements must be refused")
+fake_rpc.state = { sessionId = "new", sessionFile = "/tmp/new.jsonl" }
+assert(reset_callback)
+reset_callback({ cancelled = false })
+assert(vim.deep_equal(order, { "new_session", "send" }))
+assert(sent_callback)
+assert(not session.state[one.root].replacing)
+assert(session.state[one.root].session_id == "new")
+local saved = vim.json.decode(table.concat(vim.fn.readfile(require("pi.project").state_file(one.root)), "\n"))
+assert(saved.session_id == "new" and saved.session_file == "/tmp/new.jsonl")
+
+-- The RPC transport itself uses Pi's dedicated operation and refreshes state
+-- before reporting success; /new is not submitted as a prompt.
+local Rpc = require("pi.transport.rpc")
+local requests, callbacks = {}, {}
+local fake_transport = setmetatable({
+	state = { sessionId = "old", sessionFile = "/tmp/old.jsonl" },
+	handlers = {},
+	changed_paths = { ["one.txt"] = true },
+	latest_response = "old response",
+}, Rpc)
+fake_transport.request = function(_, request, callback)
+	table.insert(requests, request)
+	table.insert(callbacks, callback)
+end
+local rpc_finished = false
+fake_transport:new_session(function(_, rpc_err)
+	assert(not rpc_err)
+	rpc_finished = true
+end)
+assert(requests[1].type == "new_session" and #requests == 1)
+callbacks[1]({ cancelled = false })
+assert(requests[2].type == "get_state" and not rpc_finished)
+callbacks[2]({ sessionId = "rpc-new", sessionFile = "/tmp/rpc-new.jsonl" })
+assert(rpc_finished and fake_transport.state.sessionId == "rpc-new")
+assert(fake_transport.latest_response == nil and next(fake_transport.changed_paths) == nil)
+
 vim.cmd("bwipeout!")
+vim.fn.delete(require("pi.project").state_file(one.root))
+session.state[one.root] = nil
 vim.fn.delete(project, "rf")
 print("lua tests passed")

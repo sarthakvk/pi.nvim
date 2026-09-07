@@ -8,6 +8,7 @@ M.defaults = {
 	prefix = "<leader>p",
 	add_context = "a",
 	send_current = "s",
+	new = "n",
 	send_draft = "S",
 	show_context = "v",
 	remove_context = "d",
@@ -32,6 +33,7 @@ M.which_key_defaults = {
 local actions = {
 	{ name = "add_context", rhs = ":PiContextAdd<cr>", mode = { "n", "x" }, desc = "Pi: Add Context" },
 	{ name = "send_current", rhs = ":PiSend<cr>", mode = { "n", "x" }, desc = "Pi: Send Current Context" },
+	{ name = "new", rhs = ":PiNew<cr>", mode = { "n", "x" }, desc = "Pi: Start New Conversation" },
 	{ name = "send_draft", rhs = "<cmd>PiContextSend<cr>", mode = "n", desc = "Pi: Send Context Draft" },
 	{ name = "show_context", rhs = "<cmd>PiContextShow<cr>", mode = "n", desc = "Pi: View Context Draft" },
 	{ name = "remove_context", rhs = "<cmd>PiContextRemove<cr>", mode = "n", desc = "Pi: Delete Context Item" },
