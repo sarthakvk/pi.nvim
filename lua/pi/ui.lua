@@ -127,31 +127,4 @@ function M.open_draft(root, items)
 	return bufnr
 end
 
----@param root string
----@param findings pi.StoredFinding[]
----@return integer bufnr
-function M.open_findings(root, findings)
-	local lines, ids_by_line = { "Pi findings", "" }, {}
-	for _, finding in ipairs(findings) do
-		table.insert(
-			lines,
-			("%s:%d-%d [%s]%s %s — %s"):format(
-				finding.path,
-				finding.start_line,
-				finding.end_line,
-				finding.severity,
-				finding.stale and " stale" or "",
-				finding.title,
-				finding.message
-			)
-		)
-		ids_by_line[#lines] = finding.id
-	end
-	local bufnr = M.open_text("pi://findings/" .. vim.fn.sha256(root):sub(1, 8), table.concat(lines, "\n"))
-	-- pi.findings.at_cursor uses this map so :PiReply works from the listing as
-	-- well as from the annotated source line.
-	vim.b[bufnr].pi_root, vim.b[bufnr].pi_finding_ids = root, ids_by_line
-	return bufnr
-end
-
 return M

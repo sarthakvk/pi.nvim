@@ -120,50 +120,7 @@ function M.start(config, root, saved_session, handlers, callback)
 			return callback(nil, err)
 		end
 		self.state = state
-		-- A resumed session may already contain findings published before Neovim
-		-- attached. Replaying the conversation's active branch rebuilds them so the
-		-- editor shows the same set Pi believes is current.
-		self:request({ type = "get_tree" }, function(tree, tree_err)
-			if not tree_err and self.handlers.on_findings_snapshot then
-				local active_findings, branch_by_id = {}, {}
-				local function visit(node, ancestors)
-					local chain = vim.list_extend(vim.deepcopy(ancestors), { node.entry })
-					branch_by_id[node.entry.id] = chain
-					for _, child in ipairs(node.children or {}) do
-						visit(child, chain)
-					end
-				end
-				for _, node in ipairs(tree.tree or {}) do
-					visit(node, {})
-				end
-				-- Only the branch ending at the active leaf counts; abandoned branches
-				-- describe findings that were undone by a rewind.
-				local branch = branch_by_id[tree.leafId] or {}
-				for _, entry in ipairs(branch) do
-					if
-						entry.type == "message"
-						and entry.message.role == "toolResult"
-						and entry.message.toolName == "nvim_publish_findings"
-					then
-						for _, finding in ipairs((entry.message.details or {}).findings or {}) do
-							active_findings[finding.id] = finding
-						end
-					elseif entry.type == "custom" and entry.customType == "pi.nvim/findings-clear" then
-						local id = entry.data and entry.data.id
-						if id then
-							active_findings[id] = nil
-						else
-							active_findings = {}
-						end
-					end
-				end
-				self.handlers.on_findings_snapshot(
-					vim.tbl_values(active_findings),
-					{ origin_session_id = self.state.sessionId, origin_session_file = self.state.sessionFile }
-				)
-			end
-			callback(self)
-		end)
+		callback(self)
 	end)
 end
 
@@ -222,16 +179,6 @@ function M:receive(event)
 		local path = event.args and event.args.path
 		if type(path) == "string" then
 			self.changed_paths[path] = true
-		end
-	elseif event.type == "tool_execution_end" and event.toolName == "nvim_publish_findings" and not event.isError then
-		-- The tool validates and rejects a batch whole, so only a successful call
-		-- carries findings the editor can trust.
-		local published = event.result and event.result.details and event.result.details.findings
-		if type(published) == "table" and self.handlers.on_findings then
-			self.handlers.on_findings(published, {
-				origin_session_id = self.state and self.state.sessionId,
-				origin_session_file = self.state and self.state.sessionFile,
-			})
 		end
 	elseif event.type == "extension_ui_request" then
 		-- Answered here and not forwarded: Pi is blocked waiting for the reply.
@@ -339,22 +286,9 @@ function M:new_session(callback)
 			self.state = state
 			self.latest_response = nil
 			self.changed_paths = {}
-			if self.handlers.on_findings_snapshot then
-				self.handlers.on_findings_snapshot(
-					{},
-					{ origin_session_id = state.sessionId, origin_session_file = state.sessionFile }
-				)
-			end
 			callback(data)
 		end)
 	end)
-end
-
--- Pi's RPC protocol dispatches extension slash commands immediately without an LLM turn.
----@param command string Slash command without its leading slash.
----@param callback fun(data: table?, err: string?)
-function M:extension_command(command, callback)
-	self:request({ type = "prompt", message = "/" .. command }, callback)
 end
 
 -- Abort first so an in-flight turn is cancelled cleanly, then signal the process;

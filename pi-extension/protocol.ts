@@ -1,49 +1,20 @@
 // Shared vocabulary between the Pi side of the bridge and Neovim: the wire
-// version, the Finding record, and the path and validation rules both ends must
-// agree on. Kept apart from index.ts because these are pure functions with no
-// Pi runtime dependency, which is what makes them testable and safe to reuse.
+// version and the path and validation rules both ends must agree on. Kept apart
+// from index.ts because these are pure functions with no Pi runtime dependency,
+// which is what makes them testable and safe to reuse.
 //
 // The project-boundary rules here mirror lua/pi/project.lua deliberately: if the
-// two disagreed about what a root or a relative path is, findings would resolve
+// two disagreed about what a root or a relative path is, context would resolve
 // to different files on each side.
 
-import { createHash, randomUUID } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 // Bumped only on an incompatible change; both ends refuse a mismatch at the
 // handshake rather than half-speaking an older dialect.
-export const VERSION = 1;
-
-export type FindingSeverity = "error" | "warning" | "information" | "hint";
-
-// The model supplies only the judgment. createFinding adds the source anchor
-// and transport metadata that the extension can determine more reliably.
-export type FindingInput = {
-  path: string;
-  start_line: number;
-  end_line: number;
-  severity: FindingSeverity;
-  diagnostic: string;
-};
-
-export type Finding = {
-  id: string;
-  request_id: string;
-  context_item_id?: string;
-  path: string;
-  start_line: number;
-  end_line: number;
-  severity: FindingSeverity;
-  title: string;
-  message: string;
-  expected_text: string;
-};
-
-export function identifier(): string {
-  return randomUUID();
-}
+export const VERSION = 2;
 
 // Returns `candidate` as a root-relative POSIX path, or undefined if it escapes
 // the project. Both ends are resolved through realpath first so a symlink cannot
@@ -63,7 +34,7 @@ export function inside(root: string, candidate: string): string | undefined {
       );
     }
     const relativePath = relative(realRoot, realCandidate);
-    // "" is the root directory itself, which is never a file we may annotate.
+    // "" is the root directory itself, rather than a project file.
     if (
       relativePath === "" ||
       relativePath === ".." ||
@@ -88,56 +59,6 @@ export function canonicalRoot(cwd: string): string {
   } catch {
     return realpathSync.native(cwd);
   }
-}
-
-// Findings come from a model, so nothing about them is trusted. The extension
-// validates the model's small input and reads the source anchor itself.
-export function createFinding(
-  root: string,
-  requestId: string,
-  value: unknown,
-): Finding {
-  if (!value || typeof value !== "object")
-    throw new Error("finding must be an object");
-  const input = value as Record<string, unknown>;
-  const path =
-    typeof input.path === "string" ? inside(root, input.path) : undefined;
-  const severity = input.severity;
-  if (!path) throw new Error("finding path must be a project-relative path");
-  if (
-    !Number.isInteger(input.start_line) ||
-    !Number.isInteger(input.end_line) ||
-    (input.start_line as number) < 1 ||
-    (input.end_line as number) < (input.start_line as number)
-  )
-    throw new Error("finding lines must be a valid one-based inclusive range");
-  if (!["error", "warning", "information", "hint"].includes(String(severity)))
-    throw new Error("invalid finding severity");
-  if (typeof input.diagnostic !== "string" || input.diagnostic === "")
-    throw new Error("finding diagnostic must be a non-empty string");
-
-  const startLine = input.start_line as number;
-  const endLine = input.end_line as number;
-  const sourceLines = readFileSync(join(root, path), "utf8").split("\n");
-  // A trailing newline splits into a phantom empty last line; dropping it keeps
-  // indices in step with the line numbers the editor reports.
-  if (sourceLines.at(-1) === "") sourceLines.pop();
-  if (endLine > sourceLines.length)
-    throw new Error("finding range exceeds file length");
-
-  return {
-    id: identifier(),
-    request_id: requestId,
-    path,
-    start_line: startLine,
-    end_line: endLine,
-    severity: severity as FindingSeverity,
-    // The wire shape predates the smaller tool input. Keep its title/message
-    // split internal so existing Neovim clients continue to render findings.
-    title: "Pi finding",
-    message: input.diagnostic,
-    expected_text: sourceLines.slice(startLine - 1, endLine).join("\n"),
-  };
 }
 
 // File-name stem for a session's socket and descriptor. Hashed because roots and

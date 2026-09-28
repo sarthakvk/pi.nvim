@@ -1,8 +1,8 @@
 -- Public entry point for pi.nvim: setup/config plus the function behind every
 -- :Pi* command. It owns the flow a user sees — capture context, choose or start
--- a Pi target, send, and work with the findings that come back — and delegates
--- the details to pi.context (capture), pi.draft (collection and bundling),
--- pi.session (which Pi to talk to), pi.findings (annotations), and pi.ui.
+-- a Pi target, and send — and delegates the details to pi.context (capture),
+-- pi.draft (collection and bundling),
+-- pi.session (which Pi to talk to), and pi.ui.
 --
 -- Two rules shape most of what follows: only saved source is ever sent, and Pi
 -- is never started or steered without an explicit user action.
@@ -11,7 +11,6 @@ local project = require("pi.project")
 local context = require("pi.context")
 local draft = require("pi.draft")
 local session = require("pi.session")
-local findings = require("pi.findings")
 local ui = require("pi.ui")
 local keymaps = require("pi.keymaps")
 
@@ -29,15 +28,14 @@ M.config = {
 	max_context_bytes = 256 * 1024,
 	pi_executable = "pi",
 	extension_path = plugin_root .. "/pi-extension/index.ts",
-	diagnostics = { signs = true, underline = true, virtual_text = false },
 	keymaps = keymaps.defaults,
 	which_key = keymaps.which_key_defaults,
 }
 
 ---@return string
 local function current_root()
-	-- Draft and findings listings are scratch buffers with no real path, so they
-	-- carry the root they were opened for; fall back to the file or the cwd.
+	-- Draft listings are scratch buffers with no real path, so they carry the
+	-- root they were opened for; fall back to the file or the cwd.
 	local stored = vim.b.pi_root
 	if type(stored) == "string" and stored ~= "" then
 		return stored
@@ -80,26 +78,11 @@ end
 ---@param root string
 local function install_session_handlers(root)
 	local current_session = session.get(root)
-	-- Findings are tagged with the session that produced them so :PiReply can go
-	-- back to the conversation holding the surrounding reasoning.
-	---@param metadata pi.FindingOrigin?
-	---@return pi.FindingOrigin
-	local function origin_or_current(metadata)
-		return metadata
-			or { origin_session_id = current_session.session_id, origin_session_file = current_session.session_file }
-	end
-	current_session.on_findings = function(items, metadata)
-		findings.publish(root, items, origin_or_current(metadata))
-	end
-	current_session.on_findings_snapshot = function(items, metadata)
-		findings.replace(root, items, origin_or_current(metadata))
-	end
 	current_session.on_known_changes = function(paths)
 		report_known_changes(root, paths)
 	end
 	current_session.on_settled = function(worker)
 		report_known_changes(root, vim.tbl_keys(worker.changed_paths or {}))
-		findings.revalidate(root)
 		ui.notify("Pi settled")
 	end
 	current_session.on_exit = function(code, stderr)
@@ -380,9 +363,7 @@ local function send_current_with(opts, send)
 		elseif pointer.modified then
 			ui.notify("Buffer has unsaved changes; Pi will read the saved file", vim.log.levels.WARN)
 		end
-		-- Ids come from pi.draft even though this send never enters one: Pi
-		-- addresses findings by these ids, so the two below must differ from each
-		-- other and from every id another send produces.
+		-- Use the same unique request and context ids as draft sends.
 		local request = {
 			id = draft.new_id(),
 			root = pointer.root,
@@ -472,98 +453,6 @@ function M.sessions()
 	end)
 end
 
--- :PiFindings
-function M.findings()
-	local root = current_root()
-	findings.revalidate(root)
-	ui.open_findings(root, findings.list(root))
-end
-
--- :PiReply — replies to the finding under the cursor, in the conversation that
--- raised it.
-function M.reply()
-	local root, finding = current_root(), findings.at_cursor(current_root())
-	if not finding then
-		return ui.notify("No Pi finding at cursor", vim.log.levels.WARN)
-	end
-	ui.input("Reply to finding: ", function(reply)
-		if not reply or reply == "" then
-			return
-		end
-		local function send(target)
-			-- The reply names the finding and whether it still matches the source, so
-			-- Pi can tell an answer about live code from one about a stale range.
-			local message = ("Reply to Pi finding %s (request %s, %s):\n%s"):format(
-				finding.id,
-				finding.request_id or "unknown",
-				finding.stale and "stale" or "current",
-				reply
-			)
-			target.transport:send(message, target.activity == "working" and "followUp" or nil, function(_, send_err)
-				if send_err then
-					ui.notify(send_err, vim.log.levels.ERROR)
-				else
-					ui.notify("Reply sent to Pi")
-				end
-			end)
-		end
-		-- A reply belongs in the conversation that raised the finding; only if that
-		-- session is gone does the user get to pick a different one.
-		local current_session = session.get(root)
-		if finding.origin_session_id and current_session.session_id ~= finding.origin_session_id then
-			return session.attach_origin(root, finding.origin_session_id, function(target, err)
-				if target then
-					return send(target)
-				end
-				ui.select({ "Choose another attached session", "Cancel" }, err, tostring, function(choice)
-					if choice == "Choose another attached session" then
-						session.choose_and_attach(root, function(selected, select_err)
-							if selected then
-								send(selected)
-							else
-								ui.notify(select_err, vim.log.levels.WARN)
-							end
-						end)
-					end
-				end)
-			end)
-		end
-		ensure_target(root, function(target, err)
-			if target then
-				send(target)
-			else
-				ui.notify(err, vim.log.levels.WARN)
-			end
-		end)
-	end)
-end
-
--- Clears the finding under the cursor, or all of them. The local state is
--- cleared first and unconditionally: telling Pi is best effort, and the user
--- asked for the annotation to go away either way.
-function M.clear()
-	local root, finding = current_root(), findings.at_cursor(current_root())
-	local id = finding and finding.id or nil
-	findings.clear(root, id)
-	local current_session = session.get(root)
-	-- Each transport has its own way to record the clear in Pi's session: the
-	-- bridge socket has a request for it, the RPC worker only has slash commands.
-	if current_session.mode == "interactive" and current_session.transport then
-		current_session.transport:clear_findings(id, function(_, err)
-			if err then
-				ui.notify("Finding was cleared locally only: " .. err, vim.log.levels.WARN)
-			end
-		end)
-	elseif current_session.mode == "headless" and current_session.transport then
-		current_session.transport:extension_command("nvim-bridge clear" .. (id and " " .. id or ""), function(_, err)
-			if err then
-				ui.notify("Finding was cleared locally only: " .. err, vim.log.levels.WARN)
-			end
-		end)
-	end
-	ui.notify(finding and "Cleared Pi finding" or "Cleared Pi findings")
-end
-
 -- Headless Pi has no terminal of its own, so its last reply is only visible here.
 -- :PiResponse
 function M.response()
@@ -608,20 +497,8 @@ end
 ---@param options table? Partial pi.Config.
 function M.setup(options)
 	M.config = vim.tbl_deep_extend("force", M.config, options or {})
-	vim.diagnostic.config(M.config.diagnostics, findings.namespace)
 	local group = vim.api.nvim_create_augroup("pi.nvim", { clear = true })
 	keymaps.setup(M.config.keymaps, M.config.which_key, group)
-	-- Findings anchor to exact text, so any edit or buffer switch is a chance for
-	-- one to become stale; re-checking here keeps the [stale] marker honest.
-	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufEnter", "BufWritePost" }, {
-		group = group,
-		callback = function(args)
-			local name = vim.api.nvim_buf_get_name(args.buf)
-			if name ~= "" then
-				findings.revalidate(project.root(name))
-			end
-		end,
-	})
 	-- Headless workers are ours, so they leave with Neovim. Attached terminal
 	-- sessions belong to the user and are left running.
 	vim.api.nvim_create_autocmd("VimLeavePre", {

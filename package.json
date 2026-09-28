@@ -15,8 +15,7 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "scripts": {
     "test": "nvim --headless -u NONE -l tests/lua/run.lua",

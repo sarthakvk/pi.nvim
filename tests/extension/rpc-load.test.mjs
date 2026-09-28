@@ -1,7 +1,7 @@
 // Smoke test for the companion extension: `pi --mode rpc` must load
 // pi-extension/index.ts and stay usable. It is deliberately shallow — a
 // successful get_state response proves the extension parsed, registered its
-// command and tool without collision, and did not throw at session start, which
+// command without collision, and did not throw at session start, which
 // is the failure mode most likely to slip past the Lua tests. No model is
 // contacted, so this runs offline.
 

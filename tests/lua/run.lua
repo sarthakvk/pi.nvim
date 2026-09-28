@@ -11,6 +11,7 @@ vim.cmd("runtime plugin/pi.lua")
 
 local commands = vim.api.nvim_get_commands({ builtin = false })
 assert(commands.PiNew and commands.PiNew.nargs == "*", ":PiNew must accept the same note arguments as :PiSend")
+assert(not commands.PiFindings and not commands.PiReply and not commands.PiClear, "finding commands must not be registered")
 
 local function mapping(mode, lhs)
 	return vim.fn.maparg(lhs, mode, false, true)
@@ -25,6 +26,9 @@ assert(mapping("x", "<leader>ps").rhs == ":PiSend<cr>")
 assert(mapping("n", "<leader>pn").rhs == ":PiNew<cr>")
 assert(mapping("x", "<leader>pn").rhs == ":PiNew<cr>")
 assert(mapping("x", "<leader>pS").lhs == nil)
+for _, lhs in ipairs({ "<leader>pf", "<leader>pR", "<leader>pC" }) do
+	assert(mapping("n", lhs).lhs == nil, "removed finding actions must leave their keys available")
+end
 
 local keymaps = require("pi.keymaps")
 local custom_keymaps = vim.tbl_deep_extend("force", {}, keymaps.defaults, {

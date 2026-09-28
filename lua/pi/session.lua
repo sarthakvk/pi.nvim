@@ -56,7 +56,7 @@ function M.discover(root)
 		local descriptor = read_json(path)
 		if
 			descriptor
-			and descriptor.version == 1
+			and descriptor.version == 2
 			and descriptor.root == root
 			and type(descriptor.socket_path) == "string"
 		then
@@ -106,11 +106,6 @@ function M.attach(root, descriptor, callback)
 						current.on_known_changes(paths)
 					end
 				end
-			elseif event.type == "findings" and current.on_findings_snapshot then
-				current.on_findings_snapshot(event.findings, {
-					origin_session_id = event.session_id or current.session_id,
-					origin_session_file = event.session_file or current.session_file,
-				})
 			elseif event.type == "tool_activity" then
 				current.known_changes = current.known_changes or {}
 				for _, path in ipairs(event.paths or {}) do
@@ -136,20 +131,6 @@ function M.attach(root, descriptor, callback)
 		current.activity, current.replacing = transport.state.activity or "idle", nil
 		callback(current)
 	end)
-end
-
--- Reattaches to the specific session that produced a finding, so a reply lands
--- in the conversation that has the surrounding reasoning.
----@param root string
----@param session_id string
----@param callback fun(state: pi.SessionState?, err: string?)
-function M.attach_origin(root, session_id, callback)
-	for _, descriptor in ipairs(M.discover(root)) do
-		if descriptor.session_id == session_id then
-			return M.attach(root, descriptor, callback)
-		end
-	end
-	callback(nil, "the Pi session that created this finding is not attached")
 end
 
 -- Attaches the only opted-in session, or prompts when there is more than one.
@@ -220,18 +201,6 @@ function M.start_headless(root, config, callback)
 		end,
 		-- The handlers below only forward to whatever pi.init wired onto the state
 		-- table; they are re-read per call because attaching happens later.
-		on_findings = function(items, origin)
-			local current = state_for(root)
-			if current.on_findings then
-				current.on_findings(items, origin)
-			end
-		end,
-		on_findings_snapshot = function(items, origin)
-			local current = state_for(root)
-			if current.on_findings_snapshot then
-				current.on_findings_snapshot(items, origin)
-			end
-		end,
 		on_status = function(key, text)
 			local current = state_for(root)
 			if current.on_status then

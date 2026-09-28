@@ -1,29 +1,22 @@
 // The Pi half of the bridge: a Pi extension that lets one Pi session be driven
-// from Neovim and gives Pi a way to send review findings back.
+// from Neovim and reports its activity and edits back.
 //
-// It contributes three things. `/nvim-bridge` toggles a unix socket in the
-// user's private runtime directory and advertises it with a descriptor file —
-// this is the opt-in, and without it a Pi process is invisible to Neovim even
-// when it shares the project. The socket then serves Neovim's requests (send a
-// message, clear findings) and pushes activity, edit, and findings events. The
-// `nvim_publish_findings` tool is how Pi returns review annotations, which are
-// editor-only and never touch source files. The bridge also supports atomically
-// replacing a conversation and sending the first prompt into its successor.
-//
-// Findings live in Pi's session history rather than in memory alone, so they are
-// rebuilt on reattach and survive a restart.
+// `/nvim-bridge` toggles a unix socket in the user's private runtime directory
+// and advertises it with a descriptor file — this is the opt-in, and without it
+// a Pi process is invisible to Neovim even when it shares the project. The socket
+// then serves Neovim's requests and pushes activity and edit events. The bridge
+// also supports atomically replacing a conversation and sending the first prompt
+// into its successor.
 
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -33,18 +26,15 @@ import { join } from "node:path";
 import {
   VERSION,
   canonicalRoot,
-  createFinding,
   descriptorName,
   formatContextEnvelope,
-  identifier,
   inside,
   parseJson,
-  type Finding,
 } from "./protocol";
 
 // Pi may load this file more than once (as an installed package and via
-// --extension); registering the same tool twice would fail, so the first load
-// marks the API object and later ones return immediately.
+// --extension); to avoid duplicate registrations, the first load marks the API
+// object and later ones return immediately.
 const GUARD = Symbol.for("pi.nvim.extension.loaded");
 // Roots whose bridge is opted in, kept on globalThis so the opt-in outlives a
 // session swap. /new, /resume, /fork, and /reload tear this extension instance
@@ -61,9 +51,6 @@ const BOUND = Symbol.for("pi.nvim.extension.bound");
 // Like opt-in state, it must survive extension module re-evaluation during the
 // very session replacement it initiates.
 const SESSION_CONTROL = Symbol.for("pi.nvim.extension.sessionControl");
-// Session entry type recording that findings were cleared. Clearing has to be
-// part of the history, otherwise replaying it would resurrect them.
-const FINDINGS_CLEAR_TYPE = "pi.nvim/findings-clear";
 
 type StartNewSession = (message: string) => Promise<void>;
 type SessionControl = {
@@ -107,19 +94,8 @@ type Runtime = {
   socketPath?: string;
   descriptorPath?: string;
   clients: Set<Socket>;
-  findings: Map<string, Finding>;
   changedPaths: Set<string>;
 };
-
-// Pi's own StringEnum, inlined. It is exported from @earendil-works/pi-ai at
-// runtime but absent from that package's published .d.ts, and the package only
-// exists nested under pi-coding-agent, so neither the import nor its type
-// resolves from here. The emitted schema is identical: a plain string enum
-// rather than anyOf/const, which is what Google's API and some other providers
-// require.
-function stringEnum<T extends readonly string[]>(values: T) {
-  return Type.Unsafe<T[number]>({ type: "string", enum: values });
-}
 
 function optedInRoots(): Set<string> {
   const global = globalThis as unknown as Record<symbol, Set<string>>;
@@ -153,66 +129,10 @@ function runtimeDirectory(): string {
   return path;
 }
 
-function splitLines(text: string): string[] {
-  const result = text.split("\n");
-  // A trailing newline splits into a phantom empty last line; dropping it keeps
-  // indices in step with the line numbers the editor reports.
-  if (result.at(-1) === "") result.pop();
-  return result;
-}
-
-function expectedTextMatches(root: string, finding: Finding): boolean {
-  try {
-    const text = readFileSync(join(root, finding.path), "utf8");
-    return (
-      splitLines(text)
-        .slice(finding.start_line - 1, finding.end_line)
-        .join("\n") === finding.expected_text
-    );
-  } catch {
-    return false;
-  }
-}
-
-// Rebuilds the finding set from the session's history, so reattaching or
-// resuming a session shows the same annotations Pi last published rather than an
-// empty slate.
-function restoreFindings(runtime: Runtime): void {
-  runtime.findings.clear();
-  for (const entry of runtime.ctx.sessionManager.getBranch()) {
-    if (
-      entry.type === "message" &&
-      entry.message.role === "toolResult" &&
-      entry.message.toolName === "nvim_publish_findings"
-    ) {
-      for (const finding of (
-        entry.message.details as { findings?: Finding[] } | undefined
-      )?.findings || [])
-        runtime.findings.set(finding.id, finding);
-    }
-    if (entry.type === "custom" && entry.customType === FINDINGS_CLEAR_TYPE) {
-      const id = (entry.data as { id?: string } | undefined)?.id;
-      if (id) runtime.findings.delete(id);
-      else runtime.findings.clear();
-    }
-  }
-}
-
 function emit(runtime: Runtime, event: Record<string, unknown>): void {
   const line = JSON.stringify(event) + "\n";
   for (const client of runtime.clients)
     if (!client.destroyed) client.write(line);
-}
-
-// Findings are always broadcast as a complete set, so a client that missed an
-// event still converges instead of accumulating stale annotations.
-function broadcastFindings(runtime: Runtime): void {
-  emit(runtime, {
-    type: "findings",
-    findings: [...runtime.findings.values()],
-    session_id: runtime.ctx.sessionManager.getSessionId(),
-    session_file: runtime.ctx.sessionManager.getSessionFile(),
-  });
 }
 
 function closeServer(runtime: Runtime): void {
@@ -245,7 +165,7 @@ function descriptor(runtime: Runtime): Record<string, unknown> {
     started_at: Date.now(),
     socket_path: runtime.socketPath,
     activity: runtime.ctx.isIdle() ? "idle" : "working",
-    capabilities: ["send", "new_session", "findings", "tool_activity"],
+    capabilities: ["send", "new_session", "tool_activity"],
   };
 }
 
@@ -356,14 +276,6 @@ function serveRequest(runtime: Runtime, socket: Socket, rawLine: string): void {
         });
       });
     }
-  } else if (message.type === "clear_findings") {
-    const id =
-      typeof message.id_to_clear === "string" ? message.id_to_clear : undefined;
-    if (id) runtime.findings.delete(id);
-    else runtime.findings.clear();
-    appendEntry(FINDINGS_CLEAR_TYPE, { id });
-    broadcastFindings(runtime);
-    respond(socket, message.id, { cleared: id });
   } else respond(socket, message.id, undefined, "unsupported bridge request");
 }
 
@@ -399,22 +311,14 @@ function serveClient(runtime: Runtime, socket: Socket): void {
   });
   socket.on("close", () => runtime.clients.delete(socket));
   socket.on("error", () => runtime.clients.delete(socket));
-  // Send the current set immediately so a fresh client is never blank until the
-  // next change.
-  broadcastFindings(runtime);
 }
 
-// Captured once at extension load because the socket and tool handlers need to
+// Captured once at extension load because the socket handlers need to
 // speak as the user long after that call returns.
 let sendUserMessage: (
   message: string,
   options?: { deliverAs?: "steer" | "followUp" },
 ) => void;
-// ctx.sessionManager is a ReadonlySessionManager, which deliberately omits the
-// mutating methods; pi.appendEntry is the sanctioned way for an extension to
-// persist a custom entry. Captured here because the socket handlers run long
-// after the extension's registration call returns.
-let appendEntry: (customType: string, data?: unknown) => void;
 function piSend(
   runtime: Runtime,
   message: string,
@@ -485,7 +389,6 @@ export default function (pi: ExtensionAPI): void {
   let runtime: Runtime | undefined;
   const changedToolPaths = new Map<string, string | undefined>();
   sendUserMessage = pi.sendUserMessage.bind(pi);
-  appendEntry = pi.appendEntry.bind(pi);
 
   pi.on("session_start", (_event, ctx) => {
     // The runtime is replaced below, and a socket and descriptor it still owns
@@ -496,7 +399,6 @@ export default function (pi: ExtensionAPI): void {
       root,
       ctx,
       clients: new Set(),
-      findings: new Map(),
       changedPaths: new Set(),
     };
     // A terminal /new did not pass through the bridge's withSession callback,
@@ -505,7 +407,6 @@ export default function (pi: ExtensionAPI): void {
     // keeps the capability until withSession refreshes it below.
     const control = sessionControl();
     if (!control.replacing) control.start = undefined;
-    restoreFindings(runtime);
     // /new, /resume, /fork, and /reload replace this instance, and the socket
     // was named after the session it belonged to, so it went away with it.
     // Re-open one for the replacement: the user opted this project in, and
@@ -573,7 +474,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.registerCommand("nvim-bridge", {
     description:
-      "Toggle the local Neovim bridge, or use enable, disable, or clear [finding-id]",
+      "Toggle the local Neovim bridge, or use enable or disable",
     handler: async (args, ctx) => {
       if (!runtime) return;
       bindSessionControl(ctx);
@@ -585,75 +486,11 @@ export default function (pi: ExtensionAPI): void {
           runtime.server ? disable(runtime) : enable(runtime),
           "info",
         );
-      // Also reachable from headless Pi, which has no bridge socket to carry a
-      // clear_findings request and can only be driven by slash commands.
-      else if (command.startsWith("clear")) {
-        const id = command.split(/\s+/, 2)[1];
-        if (id) runtime.findings.delete(id);
-        else runtime.findings.clear();
-        appendEntry(FINDINGS_CLEAR_TYPE, { id });
-        broadcastFindings(runtime);
-        ctx.ui.notify("Pi findings cleared", "info");
-      } else
+      else
         ctx.ui.notify(
-          "Usage: /nvim-bridge [enable|disable|clear [finding-id]]",
+          "Usage: /nvim-bridge [enable|disable]",
           "info",
         );
-    },
-  });
-
-  pi.registerTool({
-    name: "nvim_publish_findings",
-    label: "Publish Neovim Findings",
-    description:
-      "Publish editor-only code diagnostics for saved project source. The extension anchors them to the current source and never edits files.",
-    promptSnippet: "Publish code diagnostics as Neovim annotations",
-    promptGuidelines: [
-      "Whenever you identify a code-related finding or review comment for context supplied from Neovim, publish it with nvim_publish_findings. Provide its project-relative path, inclusive line range, severity, and diagnostic message. Also report every published diagnostic in your chat response; publishing does not replace reporting it to the user.",
-    ],
-    parameters: Type.Object({
-      findings: Type.Array(
-        Type.Object({
-          path: Type.String(),
-          start_line: Type.Integer(),
-          end_line: Type.Integer(),
-          severity: stringEnum([
-            "error",
-            "warning",
-            "information",
-            "hint",
-          ] as const),
-          diagnostic: Type.String(),
-        }),
-      ),
-    }),
-    async execute(_id, params, _signal, _update, ctx) {
-      if (!runtime) throw new Error("Neovim bridge runtime is unavailable");
-      // Validate and enrich the whole batch before publishing any of it, so a
-      // bad finding fails the call outright instead of leaving a half-applied
-      // set in the editor. One generated request id groups this tool call's
-      // findings without asking the model to manufacture transport metadata.
-      const requestId = identifier();
-      const published = params.findings.map((finding) =>
-        createFinding(runtime!.root, requestId, finding),
-      );
-      for (const finding of published)
-        if (!expectedTextMatches(runtime.root, finding))
-          throw new Error(
-            `finding expected_text does not match ${finding.path}:${finding.start_line}-${finding.end_line}`,
-          );
-      for (const finding of published)
-        runtime.findings.set(finding.id, finding);
-      broadcastFindings(runtime);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Published ${published.length} Neovim finding(s).`,
-          },
-        ],
-        details: { findings: published },
-      };
     },
   });
 }

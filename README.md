@@ -1,8 +1,7 @@
 # pi.nvim
 
 Point an existing [Pi](https://pi.dev) conversation at the code you are looking
-at in Neovim, or send exact excerpts of it, and receive review findings back as
-native diagnostics.
+at in Neovim, or send exact excerpts of it.
 
 > [!WARNING]
 > pi.nvim is under active development. It works as a prototype, but its API and
@@ -25,7 +24,6 @@ Neovim.
   Pi turn
 - Connects only to Pi terminal sessions that explicitly opt in
 - Starts and resumes a headless Pi session when no terminal session is available
-- Renders Pi review findings with Neovim diagnostics, without changing source
 - Refuses unsaved or externally changed buffers rather than quoting stale code
 - Includes configurable `<leader>p` mappings and adds no permanent UI
 
@@ -105,10 +103,6 @@ particular lines, or several files at once — build a draft instead:
 :PiContextSend
 ```
 
-Run `:PiFindings` to list review findings Pi has published. From a finding or
-its source range, use `:PiReply` to continue the conversation or `:PiClear` to
-remove it.
-
 ## How Sessions Work
 
 ### Interactive Pi
@@ -150,11 +144,6 @@ require("pi").setup({
   resume_headless = true,
   max_context_bytes = 256 * 1024,
   pi_executable = "pi",
-  diagnostics = {
-    signs = true,
-    underline = true,
-    virtual_text = false,
-  },
   keymaps = {
     prefix = "<leader>p",
   },
@@ -168,7 +157,6 @@ require("pi").setup({
 | `max_context_bytes` | `256 * 1024`         | Reject complete context bundles larger than this limit                        |
 | `pi_executable`     | `"pi"`               | Pi executable name or path                                                    |
 | `extension_path`    | bundled extension    | Override the companion extension used by headless Pi                          |
-| `diagnostics`       | signs and underlines | Options passed to `vim.diagnostic.config` for Pi findings                     |
 | `keymaps`           | `<leader>p` mappings | Mapping prefix and action suffixes; use `false` to disable all mappings       |
 | `which_key`         | Pi group and icon    | WhichKey metadata; use `false` to disable the integration                     |
 
@@ -192,9 +180,6 @@ The default mappings keep all Pi actions under `<leader>p`:
 | `<leader>pc` | Normal         | Clear the context draft                                       |
 | `<leader>pA` | Normal         | Attach a Pi session                                           |
 | `<leader>pl` | Normal         | List Pi sessions                                              |
-| `<leader>pf` | Normal         | Show findings                                                 |
-| `<leader>pR` | Normal         | Reply to the finding under the cursor                         |
-| `<leader>pC` | Normal         | Clear findings                                                |
 | `<leader>po` | Normal         | Open the latest headless response                             |
 | `<leader>pi` | Normal         | Inspect status                                                |
 | `<leader>pq` | Normal         | Stop the headless worker                                      |
@@ -232,9 +217,6 @@ consistent icon automatically; set `which_key = false` to opt out.
 | `:PiContextSend`              | Send the draft with an overall instruction                        |
 | `:PiAttach`                   | Choose and attach an opted-in terminal session                    |
 | `:PiSessions`                 | List attached and discoverable sessions                           |
-| `:PiFindings`                 | List findings for the current project                             |
-| `:PiReply`                    | Reply to the finding under the cursor                             |
-| `:PiClear`                    | Clear the finding under the cursor, or all findings               |
 | `:PiResponse`                 | Open the latest headless Pi response                              |
 | `:PiStatus`                   | Show the bridge mode, activity, and session ID                    |
 | `:PiStop`                     | Stop the current headless worker                                  |
@@ -256,8 +238,6 @@ the current turn or wait as a follow-up.
   permissions and can modify the working tree.
 - pi.nvim reports `edit` and `write` activity it recognizes, but shell commands
   and third-party tools can change files without forming a complete audit trail.
-- Findings are editor diagnostics, not source comments. They are marked stale
-  when their expected source no longer matches.
 - pi.nvim does not provide accept/reject or patch-staging controls. Review Pi's
   changes with your normal editor and Git workflow.
 
