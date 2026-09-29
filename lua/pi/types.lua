@@ -15,7 +15,6 @@
 ---@field max_context_bytes integer Refusal threshold for an encoded context bundle.
 ---@field pi_executable string
 ---@field extension_path string Path to the companion extension Pi loads.
----@field diagnostics vim.diagnostic.Opts Applied to this plugin's diagnostic namespace.
 ---@field keymaps pi.Keymaps|false Default mappings, or false to install none.
 ---@field which_key pi.WhichKeyConfig|false Optional WhichKey group and icon metadata.
 
@@ -32,9 +31,6 @@
 ---@field clear_context string|false
 ---@field attach string|false
 ---@field sessions string|false
----@field findings string|false
----@field reply string|false
----@field clear_findings string|false
 ---@field response string|false
 ---@field status string|false
 ---@field stop string|false
@@ -42,30 +38,6 @@
 ---@class pi.WhichKeyConfig
 ---@field group string
 ---@field icon string|table
-
--- wire: Finding in protocol.ts. Editor-only review annotations; nothing here is
--- ever written back to a source file.
----@class pi.Finding
----@field id string
----@field request_id string
----@field context_item_id? string Draft item the finding answers, when it came from one.
----@field path string Project-relative, POSIX separators.
----@field start_line integer One-based, inclusive.
----@field end_line integer One-based, inclusive.
----@field severity "error"|"warning"|"information"|"hint"
----@field title string
----@field message string
----@field expected_text string Exact source the finding was written against.
----@field stale? boolean Set locally by pi.findings when the buffer no longer matches expected_text; never sent by Pi.
-
--- Which Pi conversation a finding came from, so :PiReply can return to the one
--- holding the surrounding reasoning.
----@class pi.FindingOrigin
----@field origin_session_id? string
----@field origin_session_file? string
-
--- What pi.findings actually keeps: the wire record with its origin merged in.
----@class pi.StoredFinding : pi.Finding, pi.FindingOrigin
 
 -- wire: the descriptor JSON an opted-in Pi session publishes into the runtime
 -- directory. Written by descriptor() in index.ts.
@@ -110,8 +82,6 @@
 ---@field status? table<string, string> Status lines an extension set through Pi's UI protocol.
 ---@field widgets? table<string, pi.Widget> Widgets an extension set through Pi's UI protocol.
 ---@field on_known_changes? fun(paths: string[])
----@field on_findings? fun(items: pi.Finding[], origin: pi.FindingOrigin)
----@field on_findings_snapshot? fun(items: pi.Finding[], origin: pi.FindingOrigin)
 ---@field on_status? fun(key: string, text: string)
 ---@field on_widget? fun(key: string, lines: string[], placement: string?)
 ---@field on_title? fun(title: string)
@@ -129,8 +99,6 @@
 -- transport checks before calling.
 ---@class pi.RpcHandlers
 ---@field on_event? fun(event: table, worker: pi.Rpc)
----@field on_findings? fun(items: pi.Finding[], origin: pi.FindingOrigin)
----@field on_findings_snapshot? fun(items: pi.Finding[], origin: pi.FindingOrigin)
 ---@field on_status? fun(key: string, text: string)
 ---@field on_widget? fun(key: string, lines: string[], placement: string?)
 ---@field on_title? fun(title: string)

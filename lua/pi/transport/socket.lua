@@ -1,7 +1,7 @@
 -- Client for the unix socket an opted-in Pi terminal session exposes via
 -- /nvim-bridge enable. The wire format is newline-delimited JSON in both
 -- directions: requests carry an id and are answered by a matching `response`,
--- and anything unmatched is an unsolicited event (activity, findings, tool
+-- and anything unmatched is an unsolicited event (activity, tool
 -- activity) handed to the caller's on_event handler.
 --
 -- libuv delivers reads off the main loop, where the Neovim API is unsafe, so
@@ -78,12 +78,12 @@ function M.connect(descriptor, root, handlers, callback)
 			end)
 			-- The handshake doubles as a guard: a socket that answers with a different
 			-- protocol version or project root is not a bridge we may drive.
-			self:request({ type = "hello", version = 1, root = root }, function(response, request_err)
+			self:request({ type = "hello", version = 2, root = root }, function(response, request_err)
 				if request_err then
 					self:close()
 					return callback(nil, request_err)
 				end
-				if response.root ~= root or response.version ~= 1 then
+				if response.root ~= root or response.version ~= 2 then
 					self:close()
 					return callback(nil, "Pi bridge protocol or project root mismatch")
 				end
@@ -138,12 +138,6 @@ end
 ---@param callback fun(data: table?, err: string?)
 function M:new_session(message, callback)
 	self:request({ type = "new_session", message = message }, callback)
-end
-
----@param id string? A single finding to drop, or nil to clear them all.
----@param callback fun(data: table?, err: string?)
-function M:clear_findings(id, callback)
-	self:request({ type = "clear_findings", id_to_clear = id }, callback)
 end
 
 ---@param reason string? Error reported to every in-flight request.

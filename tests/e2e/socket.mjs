@@ -120,8 +120,8 @@ try {
     );
   }
   // Connects and completes the handshake exactly as the Lua transport does,
-  // returning the descriptor the bridge answered with.
-  async function handshake(socketPath, id) {
+  // returning the response so version mismatches can also be checked.
+  async function handshake(socketPath, id, version = 2) {
     const socket = createConnection(socketPath);
     let received = "";
     socket.on("data", (chunk) => {
@@ -131,7 +131,7 @@ try {
       socket.once("connect", resolve).once("error", reject),
     );
     socket.write(
-      JSON.stringify({ id, type: "hello", version: 1, root: project }) + "\n",
+      JSON.stringify({ id, type: "hello", version, root: project }) + "\n",
     );
     await waitFor(
       () => received.includes(`"id":"${id}"`),
@@ -141,16 +141,19 @@ try {
       received.split("\n").find((line) => line.includes(`"id":"${id}"`)),
     );
     socket.destroy();
-    return response.data;
+    return response;
   }
   let descriptor;
   await waitFor(() => {
     descriptor = findDescriptor();
     return Boolean(descriptor);
   }, "bridge descriptor was not created");
-  const response = await handshake(descriptor.value.socket_path, "hello");
+  const { data: response } = await handshake(descriptor.value.socket_path, "hello");
   assert.equal(response.root, project);
-  assert.equal(response.version, 1);
+  assert.equal(response.version, 2);
+  assert.deepEqual(response.capabilities, ["send", "new_session", "tool_activity"]);
+  const outdated = await handshake(descriptor.value.socket_path, "outdated", 1);
+  assert.equal(outdated.error, "protocol or project root mismatch");
 
   // A client that closes right after writing leaves its last message without a
   // trailing newline; the bridge must still serve it.
@@ -169,7 +172,7 @@ try {
     JSON.stringify({
       id: "unterminated",
       type: "hello",
-      version: 1,
+      version: 2,
       root: project,
     }),
   );
@@ -192,7 +195,7 @@ try {
     !existsSync(join(runtime, descriptor.name)),
     "the replaced session's descriptor was left behind",
   );
-  const renewed = await handshake(replacement.value.socket_path, "renewed");
+  const { data: renewed } = await handshake(replacement.value.socket_path, "renewed");
   assert.equal(renewed.root, project);
   assert.equal(renewed.session_id, replacement.value.session_id);
 

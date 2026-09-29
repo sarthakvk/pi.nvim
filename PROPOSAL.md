@@ -15,10 +15,9 @@ separate agent implementation.
 
 The work is deliberately split into two versions. Version 1 establishes the
 collaboration loop: send editor context to a project Pi conversation and
-receive non-source annotations back. Version 2 adds reviewable agent change
-proposals.
+follow its work. Version 2 adds reviewable agent change proposals.
 
-## Version 1: conversation and non-source annotations
+## Version 1: conversation and context
 
 ### Context without restating it
 
@@ -65,18 +64,6 @@ intentional collaboration action, not an invisible background prompt.
 Selecting text alone never sends it. The editor remains quiet until you invoke
 the bridge.
 
-### Editor-native review findings
-
-Pi can return several review findings to Neovim as non-source annotations
-associated with files and ranges. They can be shown, navigated, replied to,
-and cleared without adding comments to production files. The explanation and
-surrounding discussion remain in the Pi conversation.
-
-A reply to an annotation normally returns to the Pi session that created it.
-You can explicitly direct it to another attached Pi conversation when that is
-what you intend. Annotations that no longer match the edited text are marked
-stale rather than presented as current findings.
-
 ### Local, minimal integration
 
 The bridge stays on the local machine and uses the Pi installation and
@@ -84,8 +71,8 @@ authentication you already use. It does not require an additional hosted
 service, API key, or model vendor commitment.
 
 Neovim adds only on-demand actions for sending context, choosing or starting a
-Pi session, viewing returned annotations, and opening the latest headless
-response. Interactive-session prompts and streamed work remain in Pi's
+Pi session, and opening the latest headless response. Interactive-session
+prompts and streamed work remain in Pi's
 terminal. Headless progress is reported without adding a chat window, a
 streaming-response mirror, or permanent screen furniture; its latest response
 is available in a temporary editor surface when requested.
@@ -131,15 +118,11 @@ proposal leaves your own edits untouched.
 3. The existing Pi terminal receives that as a normal message with the
    selection and location. You follow its investigation there and continue the
    conversation normally.
-4. Pi returns two review findings. Neovim marks the relevant lines without
-   modifying the source file.
-5. You reply to one finding from its annotation; the reply continues in the
-   same Pi conversation.
 
 If no interactive Pi session is available, the same action can start a
-headless project session instead. Neovim reports activity and completion,
-renders any returned findings, and lets you open the latest prose response on
-demand. The persisted session can be stopped and resumed later in Pi's
+headless project session instead. Neovim reports activity and completion and
+lets you open the latest prose response on demand. The persisted session can
+be stopped and resumed later in Pi's
 terminal for a fully interactive conversation.
 
 ## Boundaries and honest limitations
@@ -163,8 +146,6 @@ terminal for a fully interactive conversation.
 - Version 1 deliberately does not offer a partial-patch review UI. That
   belongs to Version 2, where it can preserve unsaved work and handle
   overlapping edits reliably.
-- Annotations are advisory metadata. They do not replace tests, diagnostics,
-  Git history, or human code review.
 
 ## Success criteria
 
@@ -172,8 +153,7 @@ Version 1 is successful when it removes the mechanical context-transfer step
 without moving understanding or control away from you: Neovim remains the
 primary code-reading environment, interactive Pi remains a visible terminal
 collaborator when used, headless Pi remains observable and resumable when a
-terminal is unnecessary, unsaved source never leaves the editor, and
-annotations never require source-file comments.
+terminal is unnecessary, and unsaved source never leaves the editor.
 
 Version 2 is successful when it adds a reviewable path for agent edits without
 confusing them with your own work or requiring a permanently visible AI UI.

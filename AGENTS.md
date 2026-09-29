@@ -9,9 +9,9 @@ pi.nvim is a local bridge between Neovim and [Pi](https://pi.dev). It has two
 parts:
 
 - a Lua Neovim plugin that captures saved source, sends context, manages Pi
-  sessions, and displays findings as diagnostics;
+  sessions, and reports Pi activity;
 - a TypeScript Pi extension that serves opted-in terminal sessions, runs in
-  headless RPC workers, and publishes findings back to Neovim.
+  headless RPC workers, and reports edits back to Neovim.
 
 Interactive sessions use a local Unix socket after `/nvim-bridge enable`.
 Headless sessions use Pi's NDJSON RPC mode. Pi keeps its normal tools and
@@ -35,7 +35,6 @@ lua/pi/session.lua           target selection and session lifecycle
 lua/pi/keymaps.lua           configurable mappings and optional WhichKey metadata
 lua/pi/transport/socket.lua  interactive-session transport
 lua/pi/transport/rpc.lua     headless-worker transport
-lua/pi/findings.lua          finding storage and diagnostics
 lua/pi/ui.lua                prompts and temporary buffers
 lua/pi/project.lua           roots, containment, and state paths
 lua/pi/health.lua            :checkhealth pi
@@ -51,7 +50,6 @@ tests/e2e/                   live socket and headless integration tests
 
 - Source context comes from saved files on disk; modified or stale buffers are
   rejected rather than saved or sent.
-- Findings are editor diagnostics and do not write source files.
 - Root containment and wire shapes cross the Lua/TypeScript boundary. Check
   `lua/pi/types.lua`, `lua/pi/project.lua`, and `pi-extension/protocol.ts`
   together when changing them.
